@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
   LANE_ROUTE_IDX,
+  LANE_RUN_IDX,
   LANE_X,
   LANE_Y,
   LANE_YAW,
@@ -69,11 +70,17 @@ function buildTrainGeometry(accentHex: number): THREE.BufferGeometry {
   return merged;
 }
 
+/** Per-instance tint multiplied over the vertex colors (MVP 4 selection). */
+const TINT_PLAIN = new THREE.Color(1, 1, 1);
+const TINT_SELECTED = new THREE.Color(1.9, 1.55, 0.5);
+
 export class VehicleManager {
   /** One InstancedMesh per route, index == route_idx. Add these to the scene. */
   readonly meshes: THREE.InstancedMesh[];
 
   private matrix = new THREE.Matrix4();
+  /** Selection at the last colour write, to skip redundant attribute uploads. */
+  private tintedFor: number | null = null;
 
   constructor() {
     this.meshes = ROUTE_COLORS.map((color, routeIdx) => {
@@ -91,8 +98,19 @@ export class VehicleManager {
   /**
    * Set instance matrices from interpolated stride-8 vehicle records
    * (protocol.ts lanes). Called from the render loop — no allocations.
+   *
+   * `selectedRunIdx` tints one instance so the picked train is findable in a
+   * crowd; instance order changes every frame, so the tint is written per
+   * frame rather than tracked.
    */
-  update(vehicles: Float32Array, count: number): void {
+  update(vehicles: Float32Array, count: number, selectedRunIdx: number | null = null): void {
+    // Instance order changes every frame, so tints must be rewritten whenever
+    // anything IS selected. With no selection they are all plain and the
+    // 512×3 attribute upload can be skipped entirely.
+    const selectionChanged = selectedRunIdx !== this.tintedFor;
+    const writeTints = selectedRunIdx !== null || selectionChanged;
+    this.tintedFor = selectedRunIdx;
+
     const counts = [0, 0];
     for (let i = 0; i < count; i++) {
       const o = i * VEHICLE_STRIDE;
@@ -102,11 +120,21 @@ export class VehicleManager {
       this.matrix
         .makeRotationZ(vehicles[o + LANE_YAW])
         .setPosition(vehicles[o + LANE_X], vehicles[o + LANE_Y], vehicles[o + LANE_Z]);
-      mesh.setMatrixAt(counts[routeIdx]++, this.matrix);
+      const slot = counts[routeIdx]++;
+      mesh.setMatrixAt(slot, this.matrix);
+      if (writeTints) {
+        mesh.setColorAt(
+          slot,
+          vehicles[o + LANE_RUN_IDX] === selectedRunIdx ? TINT_SELECTED : TINT_PLAIN,
+        );
+      }
     }
     for (let r = 0; r < this.meshes.length; r++) {
-      this.meshes[r].count = counts[r];
-      this.meshes[r].instanceMatrix.needsUpdate = true;
+      const mesh = this.meshes[r];
+      mesh.count = counts[r];
+      mesh.instanceMatrix.needsUpdate = true;
+      // Allocated lazily by the first setColorAt; absent if no vehicle drew.
+      if (writeTints && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }
 }

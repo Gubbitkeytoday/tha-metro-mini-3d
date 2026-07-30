@@ -21,6 +21,23 @@ declare module "*/pkg/metro_sim_wasm" {
     validation_json(): string;
     /** Writes up to MAX_VEHICLES stride-8 records into `out`, returns count. */
     evaluate(date_yyyymmdd: number, sec_of_day: number, out: Float32Array): number;
+
+    // UI-rate schedule queries (contract §7). Keep these in sync with
+    // rust-engine/wasm/src/lib.rs — this fallback is what keeps `tsc` honest
+    // when src/sim/pkg/ has not been generated.
+    /** `RunDetail` as JSON, or "null" when the run is not live. */
+    run_detail_json(run_idx: number, date_yyyymmdd: number, sec_of_day: number): string;
+    /** `StationBoard` as JSON, or "null" for unknown indices. */
+    station_board_json(
+      route_idx: number,
+      station_idx: number,
+      date_yyyymmdd: number,
+      sec_of_day: number,
+      limit: number,
+    ): string;
+    /** All stations with ENU positions, as JSON. */
+    stations_json(): string;
+
     free(): void;
   }
 }

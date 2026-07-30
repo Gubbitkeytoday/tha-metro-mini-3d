@@ -5,6 +5,11 @@ import {
   MAX_VEHICLES,
   VEHICLE_STRIDE,
   type MainToWorker,
+  type RunDetail,
+  type SimQuery,
+  type SimQueryResult,
+  type StationBoard,
+  type StationInfo,
   type ValidationSummary,
   type WorkerToMain,
 } from "./protocol";
@@ -43,6 +48,9 @@ interface Frame {
 
 const TWO_PI = Math.PI * 2;
 
+/** Give up on a schedule query after this long — see `query()`. */
+const QUERY_TIMEOUT_MS = 5_000;
+
 /** Shortest-arc angular delta from a to b, in (-PI, PI]. */
 function angleDelta(a: number, b: number): number {
   let d = (b - a) % TWO_PI;
@@ -73,6 +81,12 @@ export class SimClient {
   /** Reused output of getInterpolated(). */
   private outVehicles = new Float32Array(FRAME_FLOATS);
   private disposed = false;
+  /** In-flight schedule queries, keyed by request id. */
+  private pending = new Map<
+    number,
+    { resolve: (r: SimQueryResult) => void; reject: (e: Error) => void }
+  >();
+  private nextQueryId = 1;
 
   constructor(private callbacks: SimClientCallbacks = {}) {
     this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -110,7 +124,76 @@ export class SimClient {
         this.acceptFrame(msg.simEpochMs, msg.count, msg.buffer);
         this.callbacks.onFrame?.(msg.simEpochMs, msg.count);
         break;
+      case "queryResult":
+        this.pending.get(msg.id)?.resolve(msg.result);
+        this.pending.delete(msg.id);
+        break;
+      case "queryError":
+        this.pending.get(msg.id)?.reject(new Error(msg.message));
+        this.pending.delete(msg.id);
+        break;
     }
+  }
+
+  // ---- schedule queries (contract §7) ------------------------------------
+
+  /**
+   * Ask the engine for schedule metadata. UI-rate only — on selection or at
+   * ~1 Hz. Never call this from the render loop (§3A.2: the boundary crossing,
+   * not the math, is the cost).
+   */
+  private query(query: SimQuery): Promise<SimQueryResult> {
+    if (this.disposed) return Promise.reject(new Error("sim client disposed"));
+    const id = this.nextQueryId++;
+    return new Promise((resolve, reject) => {
+      // A wedged worker would otherwise leave the caller pending forever,
+      // which surfaces as a panel stuck on "Loading…" with no signal.
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`sim query "${query.kind}" timed out`));
+      }, QUERY_TIMEOUT_MS);
+      this.pending.set(id, {
+        resolve: (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      });
+      try {
+        this.post({ kind: "query", id, query });
+      } catch (err) {
+        // postMessage threw (worker gone): don't leave the entry behind.
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
+  /** Inspector detail for a run; null once the run is no longer live. */
+  async getRunDetail(runIdx: number, simEpochMs: number): Promise<RunDetail | null> {
+    const r = await this.query({ kind: "runDetail", runIdx, simEpochMs });
+    return r.kind === "runDetail" ? r.detail : null;
+  }
+
+  /** Upcoming calls at a station, soonest first. */
+  async getStationBoard(
+    routeIdx: number,
+    stationIdx: number,
+    simEpochMs: number,
+    limit = 8,
+  ): Promise<StationBoard | null> {
+    const r = await this.query({ kind: "stationBoard", routeIdx, stationIdx, simEpochMs, limit });
+    return r.kind === "stationBoard" ? r.board : null;
+  }
+
+  /** Every station with its ENU position — fetched once, then cached by callers. */
+  async getStations(): Promise<StationInfo[]> {
+    const r = await this.query({ kind: "stations" });
+    return r.kind === "stations" ? r.stations : [];
   }
 
   private acceptFrame(simEpochMs: number, count: number, buffer: ArrayBuffer): void {
@@ -218,6 +301,8 @@ export class SimClient {
 
   dispose(): void {
     this.disposed = true;
+    for (const p of this.pending.values()) p.reject(new Error("sim client disposed"));
+    this.pending.clear();
     this.post({ kind: "stop" });
     this.worker.terminate();
     this.frameA = null;

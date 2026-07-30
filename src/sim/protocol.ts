@@ -21,7 +21,7 @@ export const LANE_RUN_IDX = 5; // index into CacheDoc.runs
 export const LANE_ROUTE_IDX = 6; // 0 = Sukhumvit, 1 = Silom
 export const LANE_PROGRESS = 7; // 0..1 smoothed leg progress
 
-/** Parsed + camelCased form of Engine.validation_json() (contract §7 DoD). */
+/** Parsed + camelCased form of Engine.validation_json() (contract §8 DoD). */
 export interface ValidationSummary {
   feedVersion: string;
   routes: number;
@@ -30,6 +30,89 @@ export interface ValidationSummary {
   runs: number;
   services: number;
 }
+
+// ---- UI-rate schedule queries (contract §7) --------------------------------
+// Shapes below are the Rust serde output verbatim (snake_case) — see
+// sim-core/src/query.rs. They are requested on selection or at ~1 Hz and MUST
+// NOT be called on the frame path.
+
+/** One scheduled call, seconds since the run's service-day midnight. */
+export interface StopCall {
+  station_idx: number;
+  code: string;
+  name_en: string;
+  name_th: string;
+  arrival_sec: number;
+  departure_sec: number;
+}
+
+/** Everything the train inspector shows for one active run. */
+export interface RunDetail {
+  run_idx: number;
+  route_idx: number;
+  route_name: string;
+  color_rgb: number;
+  headsign: string;
+  direction: number;
+  origin: string;
+  destination: string;
+  /** 0 = dwelling, 1 = in transit — matches vehicle lane 4. */
+  state: number;
+  at_station: string | null;
+  prev_station: string | null;
+  next_station: string | null;
+  next_arrival_in_s: number | null;
+  next_stop_ordinal: number | null;
+  /** Index into `stops` of the call being dwelt at; null while in transit. */
+  current_stop_ordinal: number | null;
+  stops: StopCall[];
+}
+
+/** One upcoming call on a station board. */
+export interface BoardEntry {
+  run_idx: number;
+  route_idx: number;
+  headsign: string;
+  destination: string;
+  direction: number;
+  arrival_sec: number;
+  departure_sec: number;
+  in_s: number;
+}
+
+export interface StationBoard {
+  route_idx: number;
+  station_idx: number;
+  code: string;
+  name_en: string;
+  name_th: string;
+  entries: BoardEntry[];
+}
+
+/** Station with its ENU position, for click hit-testing. */
+export interface StationInfo {
+  route_idx: number;
+  station_idx: number;
+  code: string;
+  name_en: string;
+  name_th: string;
+  arc_m: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Query request payloads (main -> worker). */
+export type SimQuery =
+  | { kind: "runDetail"; runIdx: number; simEpochMs: number }
+  | { kind: "stationBoard"; routeIdx: number; stationIdx: number; simEpochMs: number; limit: number }
+  | { kind: "stations" };
+
+/** Query result payloads (worker -> main), keyed by request id. */
+export type SimQueryResult =
+  | { kind: "runDetail"; detail: RunDetail | null }
+  | { kind: "stationBoard"; board: StationBoard | null }
+  | { kind: "stations"; stations: StationInfo[] };
 
 /** Raw snake_case shape emitted by the Rust side; the worker maps it. */
 export interface ValidationSummaryRaw {
@@ -48,10 +131,13 @@ export type MainToWorker =
   | { kind: "init"; cache: ArrayBuffer } // cache transferred
   | { kind: "clock"; epochMs: number; warp: number } // set/replace clock
   | { kind: "returnBuffer"; buffer: ArrayBuffer } // recycle (transferred)
+  | { kind: "query"; id: number; query: SimQuery }
   | { kind: "stop" };
 
 // Worker -> main.
 export type WorkerToMain =
   | { kind: "ready"; validation: ValidationSummary }
   | { kind: "error"; message: string }
-  | { kind: "frame"; simEpochMs: number; count: number; buffer: ArrayBuffer }; // transferred
+  | { kind: "frame"; simEpochMs: number; count: number; buffer: ArrayBuffer } // transferred
+  | { kind: "queryResult"; id: number; result: SimQueryResult }
+  | { kind: "queryError"; id: number; message: string };

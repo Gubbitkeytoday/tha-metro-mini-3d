@@ -40,6 +40,62 @@ export class Engine {
         return this;
     }
     /**
+     * `RunDetail` as JSON, or `"null"` when the run is not live at that time.
+     * @param {number} run_idx
+     * @param {number} date_yyyymmdd
+     * @param {number} sec_of_day
+     * @returns {string}
+     */
+    run_detail_json(run_idx, date_yyyymmdd, sec_of_day) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.engine_run_detail_json(this.__wbg_ptr, run_idx, date_yyyymmdd, sec_of_day);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * `StationBoard` as JSON, or `"null"` for unknown route/station indices.
+     * @param {number} route_idx
+     * @param {number} station_idx
+     * @param {number} date_yyyymmdd
+     * @param {number} sec_of_day
+     * @param {number} limit
+     * @returns {string}
+     */
+    station_board_json(route_idx, station_idx, date_yyyymmdd, sec_of_day, limit) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.engine_station_board_json(this.__wbg_ptr, route_idx, station_idx, date_yyyymmdd, sec_of_day, limit);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * All stations with ENU positions, as JSON. Fetched once after init.
+     * @returns {string}
+     */
+    stations_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.engine_stations_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * ValidationSummary as JSON (stations/patterns/runs/services/feed_version).
      * @returns {string}
      */

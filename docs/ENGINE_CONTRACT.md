@@ -1,4 +1,4 @@
-# Engine Contract — MVP 2 (data pipeline) + MVP 3 (simulation)
+# Engine Contract — MVP 2 (data pipeline), MVP 3 (simulation), MVP 4 (queries)
 
 Authoritative interface spec between the Rust side (preprocessor CLI, sim core,
 Wasm bindings) and the TypeScript side (worker, loader, rendering). Both sides
@@ -295,12 +295,115 @@ same clock params (store them in Zustand when set).
   ready — this line is the visible MVP 2 DoD artifact.
 - Per-frame kinematics NEVER touch React/Zustand (§3A.7).
 
-## 7. Definition of done
+## 7. Schedule queries (MVP 4)
+
+The stride-8 buffer carries **pose only**. Everything the UI shows in words —
+headsign, origin/destination, next-station ETA, a station's upcoming calls —
+is derived from the cache in `sim-core/src/query.rs` and crossed as JSON.
+
+**These are UI-rate calls: on selection, or ~1 Hz. Never call them per frame.**
+§3A.2's "one buffer, zero-copy read" rule still governs the frame path; JSON is
+acceptable here precisely because these are not on it.
+
+```rust
+impl SimWorld {
+    /// None when the run is not live at that instant — the SAME liveness rule
+    /// evaluate() applies, so a train that leaves the buffer also stops
+    /// returning detail.
+    pub fn run_detail(&self, run_idx: u32, date_yyyymmdd: u32, sec_of_day: f64)
+        -> Option<RunDetail>;
+
+    /// Upcoming calls at one station, soonest first, at most `limit`.
+    /// Keeps a call for GRACE_S = 90 s after it is due so a dwelling train
+    /// does not vanish off the top of the board, and drops anything beyond
+    /// HORIZON_S = 2 h so a quiet late-night board does not advertise
+    /// tomorrow morning as "23h 14m". None for bad indices.
+    pub fn station_board(&self, route_idx: u8, station_idx: u16,
+                         date_yyyymmdd: u32, sec_of_day: f64, limit: usize)
+        -> Option<StationBoard>;
+
+    /// Every station with its ENU position, for click hit-testing. The
+    /// (route_idx, station_idx) pairs are exactly what station_board takes.
+    pub fn stations(&self) -> Vec<StationInfo>;
+}
+```
+
+Both time-taking queries resolve the service day the same two-frame way
+`evaluate` does (today at `sec_of_day`, previous day at `sec_of_day + 86400`),
+so post-midnight spillover behaves identically across pose and metadata.
+`BoardEntry.arrival_sec` is shifted into the **queried** day's frame, making it
+directly comparable to `sec_of_day`.
+
+`RunDetail` reports **both** `next_stop_ordinal` and `current_stop_ordinal`
+(`Some` only while dwelling). The UI must not derive one from the other:
+`next_stop_ordinal - 1` is the stop the train is sitting at *only* while
+dwelling, and treating it as "passed" greys out the very station the inspector
+says the train is at.
+
+`station_board` scans every run, so it is written to stay allocation-light:
+service activity is resolved once per service rather than once per run, frames
+come back in a fixed `[Option<Frame>; 2]`, and candidates carry indices only —
+strings are cloned after sorting and truncation, for the surviving entries.
+It takes the **first** call at a station in a pattern, which is correct for the
+Green Line; a future loop or branching pattern that calls a station twice would
+need every match emitted.
+
+Wasm surface (`rust-engine/wasm`) — all return JSON strings, `"null"` for a
+`None`:
+
+```rust
+pub fn run_detail_json(&self, run_idx: u32, date_yyyymmdd: u32, sec_of_day: f64) -> String;
+pub fn station_board_json(&self, route_idx: u8, station_idx: u16,
+                          date_yyyymmdd: u32, sec_of_day: f64, limit: usize) -> String;
+pub fn stations_json(&self) -> String;
+```
+
+Worker protocol additions (§5), a request/response pair keyed by `id`:
+
+```ts
+// main -> worker
+{ kind: "query"; id: number; query: SimQuery }
+// worker -> main
+{ kind: "queryResult"; id: number; result: SimQueryResult }
+{ kind: "queryError"; id: number; message: string }
+```
+
+`SimQuery` is `{kind:"runDetail"|"stationBoard"|"stations", …}` and carries
+`simEpochMs`, which the worker splits into Bangkok `date_yyyymmdd` +
+`sec_of_day` with the same helper the tick uses. `SimClient` wraps these as
+promises (`getRunDetail`, `getStationBoard`, `getStations`) and rejects any
+in-flight query on `dispose()`.
+
+TS mirrors of the Rust structs live in `src/sim/protocol.ts` and keep serde's
+**snake_case** field names verbatim — they are the wire format, not idiomatic
+TS. Changing a field name in `query.rs` breaks the UI silently unless both move
+together.
+
+### Frontend (MVP 4)
+
+- `src/map/selection.ts` — screen-space picking. Candidates are projected with
+  `map.project()` and the nearest within a pixel radius wins; trains beat
+  stations. Deliberately not a Three raycast: the layer's projection matrix is
+  assembled per frame from MapLibre's and there is no Three camera to cast
+  through. `project()` ignores altitude, so the 15 m track height costs a few
+  pixels of parallax under pitch, which the radius absorbs.
+- `src/map/followCamera.ts` — split capture/apply. `capture()` reads the pose
+  inside the layer's render pass (the buffer is already in hand); `apply()`
+  calls `jumpTo` from the rAF loop, because moving the camera inside `render()`
+  re-enters MapLibre's render path. Bearing is eased, not snapped.
+- Store additions are UI-derived only: `selectedRunIdx`, `selectedStation`,
+  `following`, and the static `stations` list. No pose ever enters Zustand.
+
+## 8. Definition of done
 
 - MVP 2: `green-line.tmb` generated (< 3 MB compressed — expected ≪ 1 MB),
   fetched + parsed client-side, validation summary (station/pattern/run/
   service counts + feed_version) matches the preprocessor report and is
   visible in the UI; `cargo test` green.
+- MVP 4: a train can be selected by clicking it, followed by the camera,
+  inspected (route, headsign, origin/destination, next-stop ETA, full call
+  list), a station's live board read, and the clock scrubbed to any time of
+  day — all asserted by `npm run verify:mvp4` against a running dev server.
 - MVP 3: trains visibly dwell + move along both branches at the correct
   scheduled positions for the current Bangkok time; headings follow track
   tangent (opposite directions on the two tracks); no vehicles before first

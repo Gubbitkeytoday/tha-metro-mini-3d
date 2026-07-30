@@ -258,6 +258,13 @@ fn sample_track(route: &RouteDoc, arc: f32, reverse: bool) -> ([f32; 3], f32) {
     (pos, yaw)
 }
 
+/// Position on a route's track at an arc-length offset, in the local ENU meter
+/// frame. Used by `query::stations` so station hit-test targets sit exactly on
+/// the rendered track.
+pub fn position_at_arc(route: &RouteDoc, arc: f32) -> [f32; 3] {
+    sample_track(route, arc, false).0
+}
+
 fn wrap_pi(a: f32) -> f32 {
     let mut a = a;
     while a > std::f32::consts::PI {
@@ -269,12 +276,12 @@ fn wrap_pi(a: f32) -> f32 {
     a
 }
 
+/// Synthetic fixture shared by the world and query test modules.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod tests_support {
     use crate::model::*;
 
-    fn synthetic_doc() -> CacheDoc {
+    pub(crate) fn synthetic_doc() -> CacheDoc {
         // Straight track along +x: 3 points, 100 m apart, then a corner north.
         let route = RouteDoc {
             gtfs_route_id: "1".into(),
@@ -340,6 +347,12 @@ mod tests {
             ],
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_support::synthetic_doc;
+    use super::*;
 
     fn world() -> SimWorld {
         SimWorld::from_doc(synthetic_doc()).unwrap()

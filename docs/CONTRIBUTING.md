@@ -27,6 +27,7 @@ npm run dev        # Vite dev server at http://localhost:5173
 | `npm run dev` | Vite dev server |
 | `npm run build` | `tsc -b` type-check + production build to `dist/` |
 | `npm run typecheck` | Type-check only |
+| `npm test` | Vitest unit tests (`vitest` for watch mode) |
 | `npm run preview` | Serve the production build |
 | `npm run data:fetch` | Regenerate `src/data/green-line.json` track geometry from OSM Overpass |
 | `npm run data:stations -- <gtfs-dir>` | Merge official station coordinates from an extracted Namtang GTFS feed |
@@ -35,6 +36,7 @@ With the dev server running, two scripts assert behaviour against the live app (
 
 ```bash
 npm run verify:camera       # camera gestures, driven by real mouse events
+npm run verify:mvp4         # MVP 4 acceptance: selection, follow, inspector, board, scrub
 npm run verify:kinematics   # data-level motion assertions
 npm run verify:closeup      # camera-on-a-train screenshot
 npm run screenshot          # screenshots from several camera poses
@@ -58,7 +60,7 @@ The Cargo workspace has three members: `sim-core` (kinematics, geo math, model),
 
 ## How work is scoped
 
-The project ships as **vertical MVP slices**, not horizontal layers. Each MVP is a complete, demoable increment, and later ones assume earlier ones are done. MVP 1–3 are delivered (track, data pipeline, moving trains); MVP 4–6 cover interaction/UI, multi-line breadth, and underground + polish. See the [roadmap](../README.md#roadmap) and SRS §7.
+The project ships as **vertical MVP slices**, not horizontal layers. Each MVP is a complete, demoable increment, and later ones assume earlier ones are done. MVP 1–4 are delivered (track, data pipeline, moving trains, interaction/UI); MVP 5–6 cover multi-line breadth and underground + polish. See the [roadmap](../README.md#roadmap) and SRS §7.
 
 If you are adding a feature, **place it in the right MVP** rather than building ahead of the current one.
 
@@ -88,6 +90,6 @@ Any scraped source is a fallback for the **offline preprocessor only**, subject 
 ## Submitting a change
 
 1. Branch off `main`.
-2. Run `npm run build` (type-check + build) and, if you touched Rust, `npm run rust:test`.
+2. Run `npm run build` (type-check + build) and `npm test`; if you touched Rust, `npm run rust:test`.
 3. Update `ENGINE_CONTRACT.md` if you changed anything crossing the Rust↔TS boundary.
 4. Open a pull request describing what changed and which MVP it belongs to.

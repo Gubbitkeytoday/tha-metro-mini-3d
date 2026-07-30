@@ -1,0 +1,52 @@
+import { describe, expect, it } from "vitest";
+import { lerpBearing, yawToBearing } from "./followCamera";
+
+/**
+ * These two encode conventions that fail silently: a wrong sign or offset just
+ * points the follow camera the wrong way, which nothing but a human eye
+ * catches.
+ */
+
+describe("yawToBearing", () => {
+  it("maps engine yaw (CCW from east) to map bearing (CW from north)", () => {
+    expect(yawToBearing(0)).toBe(90); // heading east -> bearing 90
+    expect(yawToBearing(Math.PI / 2)).toBe(0); // heading north -> bearing 0
+    expect(yawToBearing(Math.PI)).toBe(-90); // heading west
+    expect(yawToBearing(-Math.PI / 2)).toBe(180); // heading south
+  });
+
+  it("is monotonic in the opposite rotational sense", () => {
+    // Yaw increases counter-clockwise, bearing increases clockwise.
+    expect(yawToBearing(0.5)).toBeLessThan(yawToBearing(0));
+  });
+});
+
+describe("lerpBearing", () => {
+  it("interpolates the direct way when no wrap is involved", () => {
+    expect(lerpBearing(0, 100, 0.5)).toBeCloseTo(50);
+    expect(lerpBearing(20, 40, 0.25)).toBeCloseTo(25);
+  });
+
+  it("takes the short way across the 0/360 seam", () => {
+    // 350 -> 10 is +20, not -340.
+    expect(lerpBearing(350, 10, 0.5)).toBeCloseTo(360);
+    // 10 -> 350 is -20, not +340.
+    expect(lerpBearing(10, 350, 0.5)).toBeCloseTo(0);
+  });
+
+  it("handles the 180 boundary without oscillating", () => {
+    const step = lerpBearing(0, 180, 0.5);
+    expect(Math.abs(step)).toBeCloseTo(90);
+  });
+
+  it("returns the endpoints at t=0 and t=1", () => {
+    expect(lerpBearing(30, 200, 0)).toBeCloseTo(30);
+    expect(lerpBearing(30, 200, 1)).toBeCloseTo(200);
+  });
+
+  it("converges toward the target under repeated easing", () => {
+    let b = 0;
+    for (let i = 0; i < 200; i++) b = lerpBearing(b, 90, 0.08);
+    expect(b).toBeCloseTo(90, 1);
+  });
+});

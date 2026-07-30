@@ -2,6 +2,11 @@ import init, { Engine } from "./pkg/metro_sim_wasm";
 import {
   FRAME_BYTES,
   type MainToWorker,
+  type RunDetail,
+  type SimQuery,
+  type SimQueryResult,
+  type StationBoard,
+  type StationInfo,
   type ValidationSummary,
   type ValidationSummaryRaw,
   type WorkerToMain,
@@ -39,24 +44,56 @@ const post = (msg: WorkerToMain, transfer: Transferable[] = []): void =>
     transfer,
   );
 
+/** Split an epoch-ms instant into the Bangkok service-day fields the engine takes. */
+function bangkokFields(simEpochMs: number): { dateYyyymmdd: number; secOfDay: number } {
+  // Shift to Bangkok local, then read the wall-clock fields with UTC getters.
+  const local = new Date(simEpochMs + BANGKOK_OFFSET_MS);
+  return {
+    dateYyyymmdd:
+      local.getUTCFullYear() * 10_000 + (local.getUTCMonth() + 1) * 100 + local.getUTCDate(),
+    secOfDay:
+      local.getUTCHours() * 3600 +
+      local.getUTCMinutes() * 60 +
+      local.getUTCSeconds() +
+      local.getUTCMilliseconds() / 1000,
+  };
+}
+
 function tick(): void {
   if (!engine) return;
   const buffer = pool.pop();
   if (!buffer) return; // pool exhausted (main hasn't returned buffers) — skip tick
 
   const simEpochMs = clockEpochMs + (performance.now() - clockSetAt) * warp;
-  // Shift to Bangkok local, then read the wall-clock fields with UTC getters.
-  const local = new Date(simEpochMs + BANGKOK_OFFSET_MS);
-  const dateYyyymmdd =
-    local.getUTCFullYear() * 10_000 + (local.getUTCMonth() + 1) * 100 + local.getUTCDate();
-  const secOfDay =
-    local.getUTCHours() * 3600 +
-    local.getUTCMinutes() * 60 +
-    local.getUTCSeconds() +
-    local.getUTCMilliseconds() / 1000;
+  const { dateYyyymmdd, secOfDay } = bangkokFields(simEpochMs);
 
   const count = engine.evaluate(dateYyyymmdd, secOfDay, new Float32Array(buffer));
   post({ kind: "frame", simEpochMs, count, buffer }, [buffer]);
+}
+
+/** UI-rate schedule lookups (contract §7) — never called on the frame path. */
+function runQuery(query: SimQuery): SimQueryResult {
+  if (!engine) throw new Error("engine not ready");
+  switch (query.kind) {
+    case "runDetail": {
+      const { dateYyyymmdd, secOfDay } = bangkokFields(query.simEpochMs);
+      const json = engine.run_detail_json(query.runIdx, dateYyyymmdd, secOfDay);
+      return { kind: "runDetail", detail: JSON.parse(json) as RunDetail | null };
+    }
+    case "stationBoard": {
+      const { dateYyyymmdd, secOfDay } = bangkokFields(query.simEpochMs);
+      const json = engine.station_board_json(
+        query.routeIdx,
+        query.stationIdx,
+        dateYyyymmdd,
+        secOfDay,
+        query.limit,
+      );
+      return { kind: "stationBoard", board: JSON.parse(json) as StationBoard | null };
+    }
+    case "stations":
+      return { kind: "stations", stations: JSON.parse(engine.stations_json()) as StationInfo[] };
+  }
 }
 
 async function handleInit(cache: ArrayBuffer): Promise<void> {
@@ -93,6 +130,17 @@ self.onmessage = (event: MessageEvent<MainToWorker>) => {
       break;
     case "returnBuffer":
       pool.push(msg.buffer);
+      break;
+    case "query":
+      try {
+        post({ kind: "queryResult", id: msg.id, result: runQuery(msg.query) });
+      } catch (err) {
+        post({
+          kind: "queryError",
+          id: msg.id,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
       break;
     case "stop":
       if (timer !== null) clearInterval(timer);

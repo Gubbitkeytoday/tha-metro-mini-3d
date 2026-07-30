@@ -37,3 +37,19 @@ export function lngLatAltToLocal([lng, lat, alt]: LngLatAlt): [number, number, n
     alt,
   ];
 }
+
+/**
+ * Inverse of {@link lngLatAltToLocal} — local ENU meters back to [lng, lat].
+ * Needed to hand engine-frame positions (vehicles, stations) to MapLibre APIs
+ * that speak LngLat: `map.project()` for click hit-testing and `jumpTo()` for
+ * the follow camera.
+ */
+export function localToLngLat(x: number, y: number): { lng: number; lat: number } {
+  const merc = new MercatorCoordinate(
+    ORIGIN_MERC.x + x * MERC_PER_METER,
+    ORIGIN_MERC.y - y * MERC_PER_METER,
+    0,
+  );
+  const { lng, lat } = merc.toLngLat();
+  return { lng, lat };
+}
