@@ -1,4 +1,8 @@
-import type { CustomLayerInterface, Map as MapLibreMap } from "maplibre-gl";
+import type {
+  CustomLayerInterface,
+  CustomRenderMethodInput,
+  Map as MapLibreMap,
+} from "maplibre-gl";
 import * as THREE from "three";
 import type { GreenLineData } from "../types";
 import type { LineMaterial } from "three/addons/lines/LineMaterial.js";
@@ -41,7 +45,7 @@ export class GreenLineLayer implements CustomLayerInterface {
     private vehicles?: VehicleManager,
   ) {}
 
-  onAdd(map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext): void {
+  onAdd(map: MapLibreMap, gl: WebGL2RenderingContext): void {
     this.renderer = new THREE.WebGLRenderer({
       canvas: map.getCanvas(),
       context: gl,
@@ -67,10 +71,13 @@ export class GreenLineLayer implements CustomLayerInterface {
     this.scene = scene;
   }
 
-  render(_gl: WebGLRenderingContext | WebGL2RenderingContext, matrix: ArrayLike<number>): void {
+  render(_gl: WebGL2RenderingContext, options: CustomRenderMethodInput): void {
     if (!this.renderer || !this.scene) return;
     this.beforeRender?.();
-    this.projection.fromArray(matrix as number[]).multiply(this.originMatrix);
+    // maplibre-gl v5+ passes an args object; `defaultProjectionData.mainMatrix`
+    // is the mercator(0..1)->clip matrix that v4 handed over as `matrix`.
+    const matrix = options.defaultProjectionData.mainMatrix;
+    this.projection.fromArray(matrix as unknown as number[]).multiply(this.originMatrix);
     this.camera.projectionMatrix = this.projection;
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     for (const m of this.lineMaterials) m.resolution.copy(size);

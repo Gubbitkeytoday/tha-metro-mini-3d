@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MVP 1–3 delivered** (2026-07-30): BTS Green Line elevated 3D track over MapLibre (MVP 1), Rust GTFS preprocessor → 123 KB binary cache with client-side validation (MVP 2), and scheduled trains moving via a Wasm interpolation engine in a Web Worker with 1×/5×/10×/60× time-warp (MVP 3). Next: MVP 4 (follow-camera, inspectors, time scrubber).
 
-The full design record is [`SRS.md`](./SRS.md) (versioned SRS, v1.0.0). Read §3A before writing any code that touches the MapLibre↔Three.js bridge, the Worker/Wasm boundary, or the serialization format — those decisions are deliberate and expensive to reverse.
+The full design record is [`docs/SRS.md`](./docs/SRS.md) (versioned SRS, v1.0.0). Read §3A before writing any code that touches the MapLibre↔Three.js bridge, the Worker/Wasm boundary, or the serialization format — those decisions are deliberate and expensive to reverse.
 
 ## Commands
 
@@ -37,7 +37,8 @@ Rust toolchain (`stable-x86_64-pc-windows-gnu` — chosen because no MSVC build 
 - **Metric-width geometry disappears at low zoom.** The 9 m track deck is subpixel below ~z13, so each branch also gets a constant-pixel-width `Line2`/`LineMaterial` centerline (`buildTrackLine`); its `resolution` uniform must be updated per frame in `ThreeLayer.render()`.
 - **Base map is OpenFreeMap's Liberty style** (`https://tiles.openfreemap.org/styles/liberty`) — vector tiles, free, no API key, includes 3D building extrusions that correctly depth-occlude the track.
 - **Data provenance:** track geometry = OSM route relations 444651 (Sukhumvit) + 2067854 (Silom) via Overpass, ODbL; station coords = Namtang GTFS `route_id` 1 & 2, CC-BY 4.0. Both attributions render in the map's attribution control — keep them.
-- maplibre-gl is pinned to v4 (`^4.7.1`): v5 changed the custom-layer `render()` signature to an args object. If upgrading, adapt `ThreeLayer.render()`.
+- **maplibre-gl is on v6.** The v4→v6 migration touched four things, all load-bearing: `render()` now takes `(gl, options)` and the mercator→clip matrix comes from `options.defaultProjectionData.mainMatrix`; there is **no default export** (named imports only); GL context flags moved from `MapOptions` into `canvasContextAttributes`; and v6 locates its tile worker via `new URL(\`./${name}\`, import.meta.url)` — a dynamic specifier no bundler can rewrite, so `MapContainer.tsx` must call `setWorkerUrl()` with a `?worker&url` import. **Without that call the base map goes silently blank** (style loads, tiles never parse) while the Three layer keeps drawing — so a screenshot that shows track but no buildings means the worker URL broke.
+- **Camera input is custom** (`src/map/cameraControls.ts`) — it calls `map.dragRotate.disable()` and owns rotation entirely. Middle-drag, right-drag and ctrl+left-drag all **orbit**: vertical pitches, horizontal turns, applied together in one `jumpTo` so a diagonal drag does both. Directions and rates match MapLibre's (`-0.5 * dy`, `+0.8 * dx`); the reasons for replacing `dragRotate` rather than using it are that it has no middle-button binding and its rotation is anchored to the press point, so bearing response varies with where you clicked. Pan and scroll-zoom are left to MapLibre untouched. Verify with `npm run verify:camera`.
 
 ## Implementation notes (learned in MVP 2/3 — engine & pipeline)
 
@@ -51,7 +52,7 @@ Rust toolchain (`stable-x86_64-pc-windows-gnu` — chosen because no MSVC build 
 
 ## What this project is
 
-Thailand Metro Mini 3D is a web-based 3D visualization of Bangkok's rail transit network (BTS, MRT, SRT, Airport Rail Link), inspired by Mini Tokyo 3D. Trains are placed on 3D track by **interpolating static GTFS timetables** — there is no live vehicle feed (GTFS-Realtime is explicitly out of scope for v1.0). The app lets a user scrub to any past/future time and see where trains *should* be per schedule.
+Greater Bangkok Metro Mini 3D is a web-based 3D visualization of Bangkok's rail transit network (BTS, MRT, SRT, Airport Rail Link), inspired by Mini Tokyo 3D. Trains are placed on 3D track by **interpolating static GTFS timetables** — there is no live vehicle feed (GTFS-Realtime is explicitly out of scope for v1.0). The app lets a user scrub to any past/future time and see where trains *should* be per schedule.
 
 ## Planned architecture (from the SRS)
 
@@ -59,7 +60,7 @@ The system is three layers plus an offline pipeline:
 
 1. **Data pipeline** (`tools/gtfs_preprocessor/`, Rust CLI) — converts a GTFS ZIP feed into a compact binary cache (target: **< 3 MB compressed**), falling back to OpenStreetMap geometry where `shapes.txt` is coarse or missing. This is offline/build-time only; scraping (if ever used as a fallback) belongs here, never in client runtime.
 2. **Simulation core** (`rust-engine/`, Rust → WebAssembly via `wasm-pack`) — parses the binary cache and computes vehicle kinematics. Runs inside a Web Worker, decoupled from the render frame rate (fixed-timestep sim tick; render side interpolates between the two latest sim states).
-3. **Frontend** (`src/`, Vite + TypeScript + React 18 + Tailwind + Zustand) — MapLibre GL JS base map with a custom `CustomLayerInterface` WebGL layer that hosts a Three.js scene for 3D track/train rendering.
+3. **Frontend** (`src/`, Vite + TypeScript + React 19 + Tailwind + Zustand) — MapLibre GL JS base map with a custom `CustomLayerInterface` WebGL layer that hosts a Three.js scene for 3D track/train rendering.
 
 ### Load-bearing design decisions (SRS §3A) — do not casually deviate
 

@@ -14,14 +14,18 @@ import {
  * Instanced train rendering (ENGINE_CONTRACT.md §6): one InstancedMesh per
  * route (capacity MAX_VEHICLES) — two draw calls for the whole fleet.
  *
- * The train is a stylized 4-car consist (~65 m x 3.2 m x 3.8 m overall) with
- * a white cab cap on the +x end so the direction of travel is readable. Car
- * bodies + cab are merged into ONE vertex-colored geometry per route. The
- * long axis is +x at yaw = 0; yaw rotates around +z (up) in the local ENU
- * frame, matching the sim's vehicle records.
+ * The train is a stylized 4-car consist (~65 m x 3.2 m x 3.8 m overall) in
+ * white-grayish livery, with a route-colored cab cap on the +x end so both
+ * the direction of travel and the route stay readable. Car bodies + cab are
+ * merged into ONE vertex-colored geometry per route. The long axis is +x at
+ * yaw = 0; yaw rotates around +z (up) in the local ENU frame, matching the
+ * sim's vehicle records.
  */
 
-const ROUTE_COLORS = [0x65b724, 0x246b5b]; // [0]=Sukhumvit, [1]=Silom (contract §2)
+/** Shared rolling-stock livery — placeholder until per-line models land. */
+const BODY_COLOR = 0xdfe3e7;
+/** Cab-cap accent, index == route_idx: [0]=Sukhumvit, [1]=Silom (contract §2). */
+const ROUTE_COLORS = [0x65b724, 0x246b5b];
 
 const CAR_LENGTH_M = 15.8;
 const CAR_GAP_M = 0.6;
@@ -41,10 +45,10 @@ function paint(geometry: THREE.BufferGeometry, color: THREE.Color): THREE.Buffer
   return geometry;
 }
 
-/** One merged, vertex-colored train geometry for a route color. */
-function buildTrainGeometry(colorHex: number): THREE.BufferGeometry {
-  const bodyColor = new THREE.Color(colorHex);
-  const cabColor = new THREE.Color(0xffffff);
+/** One merged, vertex-colored train geometry; `accentHex` paints the cab cap. */
+function buildTrainGeometry(accentHex: number): THREE.BufferGeometry {
+  const bodyColor = new THREE.Color(BODY_COLOR);
+  const cabColor = new THREE.Color(accentHex);
   const zCenter = RIDE_HEIGHT_M + BODY_HEIGHT_M / 2;
   const totalLength = CARS * CAR_LENGTH_M + (CARS - 1) * CAR_GAP_M;
 
@@ -55,7 +59,7 @@ function buildTrainGeometry(colorHex: number): THREE.BufferGeometry {
     car.translate(x, 0, zCenter);
     parts.push(paint(car, bodyColor));
   }
-  // White cab cap: slightly oversized cross-section wrapping the +x nose.
+  // Cab cap: slightly oversized cross-section wrapping the +x nose.
   const cab = new THREE.BoxGeometry(CAB_LENGTH_M, BODY_WIDTH_M + 0.2, BODY_HEIGHT_M + 0.15);
   cab.translate(totalLength / 2 - CAB_LENGTH_M / 2 + 0.4, 0, zCenter + 0.05);
   parts.push(paint(cab, cabColor));

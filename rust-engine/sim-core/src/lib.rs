@@ -1,4 +1,4 @@
-//! sim-core — cache model + schedule evaluation for Thailand Metro Mini 3D.
+//! sim-core — cache model + schedule evaluation for Greater Bangkok Metro Mini 3D.
 //! Pure Rust; NO wasm / JS dependencies (contract §3).
 
 pub mod calendar;

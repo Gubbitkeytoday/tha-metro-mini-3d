@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-**Project Name:** Thailand Metro Mini 3D — 3D Transit Simulation Platform
+**Project Name:** Greater Bangkok Metro Mini 3D — 3D Transit Simulation Platform
 **Version:** 1.0.0
 **Status:** Draft / Technical Proposal
 **Last Updated:** 2026-07-30
@@ -10,7 +10,7 @@
 
 ## 1. Executive Summary & Vision
 
-Thailand Metro Mini 3D is an interactive, web-based 3D visualization and simulation platform that models the scheduled movement of Bangkok's rail transit network. Inspired by [Mini Tokyo 3D](https://minitokyo3d.com/), the application renders 3D train models operating along authentic geographic coordinates, station elevations, and published schedule constraints.
+Greater Bangkok Metro Mini 3D is an interactive, web-based 3D visualization and simulation platform that models the scheduled movement of Bangkok's rail transit network. Inspired by [Mini Tokyo 3D](https://minitokyo3d.com/), the application renders 3D train models operating along authentic geographic coordinates, station elevations, and published schedule constraints.
 
 The platform uses the open **Static GTFS** data standard published for Thailand's transit networks (via the Namtang / OTP open-data programme) and computes vehicle kinematics in a high-performance simulation core compiled from **Rust to WebAssembly**. Rendering is handled by a modern web 3D stack: **Vite**, **TypeScript**, **MapLibre GL JS**, and **Three.js**.
 
@@ -53,7 +53,7 @@ To achieve high rendering performance (target 60 FPS) and fast data parsing with
 ```
 +-----------------------------------------------------------------------+
 |                             USER INTERFACE                            |
-|             React 18 / Tailwind CSS / Lucide React / Vite             |
+|             React 19 / Tailwind CSS / Lucide React / Vite             |
 +-----------------------------------------------------------------------+
                                    |
 +----------------------------------v------------------------------------+
@@ -76,7 +76,7 @@ To achieve high rendering performance (target 60 FPS) and fast data parsing with
 
 **Build tooling & dev server:** Vite + TypeScript.
 
-**UI layer:** React 18. *(The framework is fixed to React for v1.0 to match the component structure in §6. Svelte was considered but is deferred to keep a single, consistent component model; see §8.)*
+**UI layer:** React 19. *(The framework is fixed to React for v1.0 to match the component structure in §6. Svelte was considered but is deferred to keep a single, consistent component model; see §8.)*
 
 **Core processing engine (Rust → Wasm):**
 

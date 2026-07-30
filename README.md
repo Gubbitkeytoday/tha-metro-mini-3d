@@ -1,4 +1,4 @@
-# Thailand Metro Mini 3D
+# Greater Bangkok Metro Mini 3D
 
 > Interactive, web-based 3D visualization of Bangkok's rail transit network — trains moving on schedule along authentic geography, elevations, and timetables.
 
@@ -8,11 +8,11 @@
 
 ## What it is
 
-Thailand Metro Mini 3D renders Bangkok's metro/rail lines as 3D track over a vector map and animates trains along them using published **static GTFS** timetables. Vehicle positions are computed by interpolating scheduled arrival/departure times — so you can watch the *scheduled* network at any moment, scrub through time, and follow individual trains.
+Greater Bangkok Metro Mini 3D renders the Bangkok Metropolitan Region's metro/rail lines as 3D track over a vector map and animates trains along them using published **static GTFS** timetables. Vehicle positions are computed by interpolating scheduled arrival/departure times — so you can watch the *scheduled* network at any moment, scrub through time, and follow individual trains.
 
 > **Schedule-driven, not live.** v1.0 uses static timetables only, not real-time vehicle feeds (GTFS-Realtime). It shows where trains *should* be per schedule.
 
-Full requirements live in [`tha-metro-mini-3d-SRS.md`](./tha-metro-mini-3d-SRS.md).
+Full requirements live in [`docs/SRS.md`](./docs/SRS.md).
 
 ## Features
 
@@ -21,6 +21,16 @@ Full requirements live in [`tha-metro-mini-3d-SRS.md`](./tha-metro-mini-3d-SRS.m
 - Time controls — real-time clock, 1×/5×/10×/60× speed, and scrub to any time.
 - Camera modes — free orbit, third-person train-follow, and an underground transparency toggle.
 - Line filters, a station/vehicle inspector, and a live timetable drawer.
+
+### Camera controls
+
+| Gesture | Effect |
+|---------|--------|
+| Left-drag | Pan |
+| Scroll wheel | Zoom |
+| Press the wheel + drag, right-drag, or ctrl + left-drag | Orbit — drag up to tilt toward the horizon, down to flatten toward top-down, sideways to swing the compass bearing |
+
+Orbiting moves both axes in one motion, so a diagonal drag tilts and turns together.
 
 ## Coverage
 
@@ -44,14 +54,14 @@ Operational lines receive full simulation (track + trains); pre-revenue lines ar
 
 | Layer | Technology |
 |-------|-----------|
-| UI | React 18, Tailwind CSS, Lucide, Zustand |
+| UI | React 19, Tailwind CSS, Lucide, Zustand |
 | Build | Vite + TypeScript |
 | Base map | MapLibre GL JS (vector tiles, 3D terrain) |
 | 3D | Three.js via a custom MapLibre WebGL layer |
 | Simulation core | Rust → WebAssembly (`wasm-pack`), run in a Web Worker |
 | Data pipeline | Rust CLI: GTFS ZIP → compact binary cache (+ OpenStreetMap geometry) |
 
-See [§3A of the SRS](./SRS.md) for design rationale and key risks (cross-origin isolation, the MapLibre↔Three bridge, float precision at city scale, serialization).
+See [§3A of the SRS](./docs/SRS.md) for design rationale and key risks (cross-origin isolation, the MapLibre↔Three bridge, float precision at city scale, serialization).
 
 ## Project structure
 
@@ -87,10 +97,22 @@ Other scripts:
 | Command | What it does |
 |---------|--------------|
 | `npm run build` | Type-check (`tsc -b`) + production build to `dist/` |
+| `npm run typecheck` | Type-check only |
 | `npm run preview` | Serve the production build locally |
 | `npm run data:fetch` | Regenerate `src/data/green-line.json` track geometry from OpenStreetMap (Overpass) |
-| `node tools/extract-stations.mjs <gtfs-dir>` | Merge official station coordinates from an extracted [Namtang GTFS](https://namtang-api.otp.go.th/opendata) feed |
-| `node tools/screenshot.mjs [url] [outDir]` | Headless-browser screenshots from several camera poses (visual check) |
+| `npm run data:stations -- <gtfs-dir>` | Merge official station coordinates from an extracted [Namtang GTFS](https://namtang-api.otp.go.th/opendata) feed |
+| `npm run screenshot -- [url] [outDir]` | Headless-browser screenshots from several camera poses (visual check) |
+| `npm run verify:camera` | Camera gesture assertions (pan/zoom/pitch/bearing) against a running dev server |
+| `npm run verify:kinematics` | Data-level motion assertions against a running dev server |
+| `npm run verify:closeup` | Camera-on-a-train screenshot against a running dev server |
+
+Rust toolchain required for these (see [CONTRIBUTING](./docs/CONTRIBUTING.md)):
+
+| Command | What it does |
+|---------|--------------|
+| `npm run rust:test` | `cargo test` across the `rust-engine/` workspace |
+| `npm run wasm:build` | Rebuild the Wasm engine into `src/sim/pkg/` (committed output) |
+| `npm run data:preprocess -- --gtfs <gtfs-dir>` | Regenerate `public/data/green-line.tmb` from an extracted GTFS feed (committed output) |
 
 ## Roadmap
 
@@ -112,9 +134,15 @@ Delivered as vertical, shippable slices — track geometry first, then motion, t
 - Base map: [OpenFreeMap](https://openfreemap.org/) vector tiles (Liberty style).
 - Any scraped source is a fallback only, used in the offline preprocessor, subject to the source's terms.
 
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](./docs/CONTRIBUTING.md) — it covers setup, how work is scoped into MVP slices, and the architectural conventions that get checked in review. By participating you agree to the [Code of Conduct](./docs/CODE_OF_CONDUCT.md).
+
 ## License
 
-_TBD._ <!-- Choose and add a LICENSE file (e.g. MIT) before public release. -->
+Source code is licensed under the [MIT License](./LICENSE).
+
+Bundled data keeps its own terms: OpenStreetMap-derived track geometry is ODbL, and the Namtang GTFS-derived timetables and station coordinates are CC-BY 4.0. Both attributions render in the map's attribution control and must be kept in any redistribution.
 
 ---
 

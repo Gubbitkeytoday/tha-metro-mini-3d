@@ -10,7 +10,7 @@ export default function App() {
       <MapContainer />
       <div className="pointer-events-none absolute left-4 top-4 rounded-xl bg-white/85 px-4 py-3 shadow-lg backdrop-blur">
         <h1 className="text-sm font-semibold text-slate-900">
-          Thailand Metro Mini 3D
+          Greater Bangkok Metro Mini 3D
         </h1>
         <p className="text-xs text-slate-500">
           MVP 3 — BTS Green Line live schedule {mapReady ? "" : "· loading map…"}

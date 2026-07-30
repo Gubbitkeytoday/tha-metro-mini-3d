@@ -1,7 +1,15 @@
 import { useEffect, useRef } from "react";
-import maplibregl from "maplibre-gl";
+// maplibre-gl v6 ships named exports only — there is no default export.
+import { Map as MapLibreMap, NavigationControl, setWorkerUrl } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+// v6 locates its tile worker with `new URL(\`./${name}\`, import.meta.url)` —
+// a dynamic specifier no bundler can rewrite, so after bundling it points at a
+// nonexistent /assets/maplibre-gl-worker.mjs and every vector-tile source
+// silently stalls (blank base map). Hand it a URL Vite actually emits; the
+// `?worker&url` suffix bundles the worker together with its shared chunk.
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { GreenLineLayer } from "../map/ThreeLayer";
+import { installCameraControls } from "../map/cameraControls";
 import { VehicleManager } from "../map/VehicleManager";
 import { ORIGIN_LNG_LAT } from "../map/coordinates";
 import { SimClient, activeSimClient } from "../sim/SimClient";
@@ -9,12 +17,14 @@ import { useAppStore } from "../stores/useAppStore";
 import greenLine from "../data/green-line.json";
 import type { GreenLineData } from "../types";
 
+setWorkerUrl(maplibreWorkerUrl);
+
 export function MapContainer() {
   const containerRef = useRef<HTMLDivElement>(null);
   const setMapReady = useAppStore((s) => s.setMapReady);
 
   useEffect(() => {
-    const map = new maplibregl.Map({
+    const map = new MapLibreMap({
       container: containerRef.current!,
       style: "https://tiles.openfreemap.org/styles/liberty",
       center: ORIGIN_LNG_LAT,
@@ -22,16 +32,15 @@ export function MapContainer() {
       pitch: 55,
       bearing: -15,
       maxPitch: 80,
-      antialias: true,
+      // v5+ moved GL context flags out of MapOptions into this bag.
+      canvasContextAttributes: { antialias: true },
       attributionControl: {
         customAttribution:
           "Track © OpenStreetMap contributors (ODbL) · Stations: Namtang / OTP open data (CC-BY 4.0)",
       },
     });
-    map.addControl(
-      new maplibregl.NavigationControl({ visualizePitch: true }),
-      "top-right",
-    );
+    map.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
+    const removeCameraControls = installCameraControls(map);
 
     let sim: SimClient | null = null;
     let rafId = 0;
@@ -84,11 +93,12 @@ export function MapContainer() {
 
     if (import.meta.env.DEV) {
       // dev-only handles for tools/screenshot.mjs and tools/verify-*.mjs
-      (window as unknown as { __map?: maplibregl.Map }).__map = map;
+      (window as unknown as { __map?: MapLibreMap }).__map = map;
       (window as unknown as { __sim?: typeof activeSimClient }).__sim = activeSimClient;
     }
     return () => {
       cancelAnimationFrame(rafId);
+      removeCameraControls();
       activeSimClient.current = null;
       sim?.dispose();
       map.remove();
