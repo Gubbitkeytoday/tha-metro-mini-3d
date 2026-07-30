@@ -31,7 +31,7 @@ export interface ValidationSummary {
   services: number;
 }
 
-// ---- UI-rate schedule queries (contract §8) --------------------------------
+// ---- UI-rate schedule queries (contract §7) --------------------------------
 // Shapes below are the Rust serde output verbatim (snake_case) — see
 // sim-core/src/query.rs. They are requested on selection or at ~1 Hz and MUST
 // NOT be called on the frame path.
@@ -63,7 +63,8 @@ export interface RunDetail {
   next_station: string | null;
   next_arrival_in_s: number | null;
   next_stop_ordinal: number | null;
-  now_sec: number;
+  /** Index into `stops` of the call being dwelt at; null while in transit. */
+  current_stop_ordinal: number | null;
   stops: StopCall[];
 }
 

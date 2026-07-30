@@ -21,20 +21,23 @@ import { localToLngLat } from "./coordinates";
  * (§3A.7).
  */
 
-/** Degrees of camera bearing per… nothing — see `yawToBearing`. */
 const RAD_TO_DEG = 180 / Math.PI;
 
 /**
  * Vehicle yaw (radians CCW from +x/east) to MapLibre bearing (degrees CW from
  * north). Looking along the direction of travel means the camera bearing
  * equals the heading, so north-up is 90° from east-up.
+ *
+ * Exported for unit testing — the 90° offset and the direction flip are
+ * exactly the kind of convention that breaks silently, and is otherwise only
+ * caught by a human noticing the camera faces backwards.
  */
-function yawToBearing(yaw: number): number {
+export function yawToBearing(yaw: number): number {
   return 90 - yaw * RAD_TO_DEG;
 }
 
-/** Shortest-arc interpolation between two bearings in degrees. */
-function lerpBearing(from: number, to: number, t: number): number {
+/** Shortest-arc interpolation between two bearings in degrees. Exported for tests. */
+export function lerpBearing(from: number, to: number, t: number): number {
   let d = (to - from) % 360;
   if (d > 180) d -= 360;
   if (d < -180) d += 360;
@@ -86,9 +89,5 @@ export class FollowCamera {
   reset(): void {
     this.pose = null;
     this.bearing = null;
-  }
-
-  hasPose(): boolean {
-    return this.pose !== null;
   }
 }

@@ -71,7 +71,7 @@ function tick(): void {
   post({ kind: "frame", simEpochMs, count, buffer }, [buffer]);
 }
 
-/** UI-rate schedule lookups (contract §8) — never called on the frame path. */
+/** UI-rate schedule lookups (contract §7) — never called on the frame path. */
 function runQuery(query: SimQuery): SimQueryResult {
   if (!engine) throw new Error("engine not ready");
   switch (query.kind) {

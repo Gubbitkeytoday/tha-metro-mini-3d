@@ -48,6 +48,9 @@ interface Frame {
 
 const TWO_PI = Math.PI * 2;
 
+/** Give up on a schedule query after this long — see `query()`. */
+const QUERY_TIMEOUT_MS = 5_000;
+
 /** Shortest-arc angular delta from a to b, in (-PI, PI]. */
 function angleDelta(a: number, b: number): number {
   let d = (b - a) % TWO_PI;
@@ -132,7 +135,7 @@ export class SimClient {
     }
   }
 
-  // ---- schedule queries (contract §8) ------------------------------------
+  // ---- schedule queries (contract §7) ------------------------------------
 
   /**
    * Ask the engine for schedule metadata. UI-rate only — on selection or at
@@ -143,8 +146,30 @@ export class SimClient {
     if (this.disposed) return Promise.reject(new Error("sim client disposed"));
     const id = this.nextQueryId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.post({ kind: "query", id, query });
+      // A wedged worker would otherwise leave the caller pending forever,
+      // which surfaces as a panel stuck on "Loading…" with no signal.
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`sim query "${query.kind}" timed out`));
+      }, QUERY_TIMEOUT_MS);
+      this.pending.set(id, {
+        resolve: (r) => {
+          clearTimeout(timer);
+          resolve(r);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      });
+      try {
+        this.post({ kind: "query", id, query });
+      } catch (err) {
+        // postMessage threw (worker gone): don't leave the entry behind.
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 

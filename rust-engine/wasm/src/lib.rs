@@ -34,7 +34,7 @@ impl Engine {
         count
     }
 
-    // ---- UI-rate schedule queries (contract §8) ---------------------------
+    // ---- UI-rate schedule queries (contract §7) ---------------------------
     // These return JSON, which is fine because they are called on selection or
     // at ~1 Hz — never on the frame path. Do not call them per frame.
 

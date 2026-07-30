@@ -130,16 +130,22 @@ if (hitPoint && hitPoint.x > 0 && hitPoint.y > 0 && hitPoint.x < 1400 && hitPoin
   await page.mouse.click(hitPoint.x, hitPoint.y);
   await new Promise((r) => setTimeout(r, 600));
   const picked = await page.evaluate(() => window.__store.getState().selectedRunIdx);
+  // Must be THE train we aimed at, not merely something: the click lands on
+  // its exact projected point, so any other result is a picking bug.
   check(
-    "clicking a train on the canvas selects it",
-    picked !== null,
-    `clicked (${hitPoint.x.toFixed(0)}, ${hitPoint.y.toFixed(0)}) -> run ${picked}`,
+    "clicking a train on the canvas selects that train",
+    picked === live.runIdx,
+    `clicked (${hitPoint.x.toFixed(0)}, ${hitPoint.y.toFixed(0)}) -> run ${picked}, wanted ${live.runIdx}`,
   );
 } else {
   // The chosen train is off-screen at the default camera; select directly so
   // the remaining checks still run, and say so rather than silently passing.
   await page.evaluate((runIdx) => window.__store.getState().selectRun(runIdx), live.runIdx);
-  check("clicking a train on the canvas selects it", false, "train off-screen, click not exercised");
+  check(
+    "clicking a train on the canvas selects that train",
+    false,
+    "train off-screen, click not exercised",
+  );
 }
 
 await new Promise((r) => setTimeout(r, 1_200));

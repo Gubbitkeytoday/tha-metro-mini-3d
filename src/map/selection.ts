@@ -29,8 +29,24 @@ interface Point {
   y: number;
 }
 
+/**
+ * Squared pixel distance to a candidate, or Infinity if it is not plausibly
+ * on screen.
+ *
+ * Under heavy pitch, points beyond the horizon project to coordinates that can
+ * land back inside the viewport, which would make a candidate behind the camera
+ * a false hit. Rejecting anything outside the canvas (plus a margin for the
+ * pick radius) closes that off cheaply.
+ */
 function screenDistanceSq(map: MapLibreMap, x: number, y: number, at: Point): number {
   const p = map.project(localToLngLat(x, y));
+  const canvas = map.getCanvas();
+  const margin = VEHICLE_PICK_PX;
+  const w = canvas.clientWidth || canvas.width;
+  const h = canvas.clientHeight || canvas.height;
+  if (p.x < -margin || p.y < -margin || p.x > w + margin || p.y > h + margin) {
+    return Number.POSITIVE_INFINITY;
+  }
   const dx = p.x - at.x;
   const dy = p.y - at.y;
   return dx * dx + dy * dy;

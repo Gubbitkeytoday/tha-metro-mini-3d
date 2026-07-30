@@ -98,6 +98,7 @@ Other scripts:
 |---------|--------------|
 | `npm run build` | Type-check (`tsc -b`) + production build to `dist/` |
 | `npm run typecheck` | Type-check only |
+| `npm test` | Vitest unit tests for the pure helpers (time formatting, bearing math) |
 | `npm run preview` | Serve the production build locally |
 | `npm run data:fetch` | Regenerate `src/data/green-line.json` track geometry from OpenStreetMap (Overpass) |
 | `npm run data:stations -- <gtfs-dir>` | Merge official station coordinates from an extracted [Namtang GTFS](https://namtang-api.otp.go.th/opendata) feed |

@@ -67,7 +67,7 @@ export function MapContainer() {
           s.setValidation(validation);
           s.setEngineStatus("ready");
           // Static station list, fetched once — powers click hit-testing and
-          // the station board's indices (contract §8).
+          // the station board's indices (contract §7).
           void sim
             ?.getStations()
             .then((stations) => useAppStore.getState().setStations(stations))
@@ -119,7 +119,13 @@ export function MapContainer() {
     const onMapClick = (e: { point: { x: number; y: number } }) => {
       const { stations, selectRun, selectStation } = useAppStore.getState();
       const hit = pickAt(map, lastVehicles, lastCount, stations, e.point);
-      if (!hit) return;
+      if (!hit) {
+        // Clicking empty map clears the selection, like clicking away from
+        // anything else.
+        selectRun(null);
+        selectStation(null);
+        return;
+      }
       if (hit.type === "vehicle") {
         selectRun(hit.runIdx);
       } else {
@@ -127,6 +133,21 @@ export function MapContainer() {
       }
     };
     map.on("click", onMapClick);
+
+    // Panning while following would fight the per-frame jumpTo, so the first
+    // user drag hands control back (Mini Tokyo 3D does the same).
+    const onDragStart = () => {
+      if (useAppStore.getState().following) useAppStore.getState().setFollowing(false);
+    };
+    map.on("dragstart", onDragStart);
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const store = useAppStore.getState();
+      store.selectRun(null);
+      store.selectStation(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
 
     // Releasing follow must also clear the smoothed bearing, or the next
     // follow starts from a stale heading.
@@ -154,6 +175,8 @@ export function MapContainer() {
       removeCameraControls();
       unsubscribeFollow();
       map.off("click", onMapClick);
+      map.off("dragstart", onDragStart);
+      window.removeEventListener("keydown", onKeyDown);
       activeSimClient.current = null;
       sim?.dispose();
       map.remove();

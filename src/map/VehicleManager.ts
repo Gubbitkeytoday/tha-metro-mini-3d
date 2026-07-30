@@ -79,6 +79,8 @@ export class VehicleManager {
   readonly meshes: THREE.InstancedMesh[];
 
   private matrix = new THREE.Matrix4();
+  /** Selection at the last colour write, to skip redundant attribute uploads. */
+  private tintedFor: number | null = null;
 
   constructor() {
     this.meshes = ROUTE_COLORS.map((color, routeIdx) => {
@@ -102,6 +104,13 @@ export class VehicleManager {
    * frame rather than tracked.
    */
   update(vehicles: Float32Array, count: number, selectedRunIdx: number | null = null): void {
+    // Instance order changes every frame, so tints must be rewritten whenever
+    // anything IS selected. With no selection they are all plain and the
+    // 512×3 attribute upload can be skipped entirely.
+    const selectionChanged = selectedRunIdx !== this.tintedFor;
+    const writeTints = selectedRunIdx !== null || selectionChanged;
+    this.tintedFor = selectedRunIdx;
+
     const counts = [0, 0];
     for (let i = 0; i < count; i++) {
       const o = i * VEHICLE_STRIDE;
@@ -113,17 +122,19 @@ export class VehicleManager {
         .setPosition(vehicles[o + LANE_X], vehicles[o + LANE_Y], vehicles[o + LANE_Z]);
       const slot = counts[routeIdx]++;
       mesh.setMatrixAt(slot, this.matrix);
-      mesh.setColorAt(
-        slot,
-        vehicles[o + LANE_RUN_IDX] === selectedRunIdx ? TINT_SELECTED : TINT_PLAIN,
-      );
+      if (writeTints) {
+        mesh.setColorAt(
+          slot,
+          vehicles[o + LANE_RUN_IDX] === selectedRunIdx ? TINT_SELECTED : TINT_PLAIN,
+        );
+      }
     }
     for (let r = 0; r < this.meshes.length; r++) {
       const mesh = this.meshes[r];
       mesh.count = counts[r];
       mesh.instanceMatrix.needsUpdate = true;
       // Allocated lazily by the first setColorAt; absent if no vehicle drew.
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      if (writeTints && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }
 }

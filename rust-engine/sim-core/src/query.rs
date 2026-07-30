@@ -47,8 +47,10 @@ pub struct RunDetail {
     pub next_arrival_in_s: Option<i64>,
     /// Index into `stops` of the next call; None once terminated.
     pub next_stop_ordinal: Option<usize>,
-    /// Seconds since this run's service-day midnight, at query time.
-    pub now_sec: i64,
+    /// Index into `stops` of the call the train is sitting at; None in transit.
+    /// Emitted explicitly so the UI never has to re-derive "which stop is this
+    /// train at" from `next_stop_ordinal - 1`.
+    pub current_stop_ordinal: Option<usize>,
     pub stops: Vec<StopCall>,
 }
 
@@ -96,6 +98,7 @@ pub struct StationInfo {
 }
 
 /// Which service-day frame a run falls in for a given local date/time.
+#[derive(Clone, Copy)]
 struct Frame {
     /// Seconds since the run's own service-day midnight.
     t_abs: f64,
@@ -103,21 +106,29 @@ struct Frame {
     to_query_frame: i64,
 }
 
+/// Today at `sec_of_day`, and the previous service day at `sec_of_day + 86400`
+/// (post-midnight spillover) — the same two-frame rule `evaluate` uses.
+/// Returned as a fixed array so per-run lookups never allocate.
+fn frames(active_today: bool, active_prev: bool, sec_of_day: f64) -> [Option<Frame>; 2] {
+    [
+        active_today.then_some(Frame { t_abs: sec_of_day, to_query_frame: 0 }),
+        active_prev.then_some(Frame {
+            t_abs: sec_of_day + 86_400.0,
+            to_query_frame: -86_400,
+        }),
+    ]
+}
+
 impl SimWorld {
-    /// Frames to test for a run: today at `sec_of_day`, and the previous
-    /// service day at `sec_of_day + 86400` (post-midnight spillover) — the
-    /// same two-frame rule `evaluate` uses.
-    fn frames_for(&self, run_idx: usize, date_yyyymmdd: u32, sec_of_day: f64) -> Vec<Frame> {
+    /// Service-activity flags for one run's calendar, for both frames.
+    fn run_frames(&self, run_idx: usize, date_yyyymmdd: u32, sec_of_day: f64) -> [Option<Frame>; 2] {
         let run = &self.doc().runs[run_idx];
         let svc = &self.doc().services[run.service_idx as usize];
-        let mut out = Vec::with_capacity(2);
-        if service_active_on(svc, date_yyyymmdd) {
-            out.push(Frame { t_abs: sec_of_day, to_query_frame: 0 });
-        }
-        if service_active_on(svc, previous_date(date_yyyymmdd)) {
-            out.push(Frame { t_abs: sec_of_day + 86_400.0, to_query_frame: -86_400 });
-        }
-        out
+        frames(
+            service_active_on(svc, date_yyyymmdd),
+            service_active_on(svc, previous_date(date_yyyymmdd)),
+            sec_of_day,
+        )
     }
 
     fn stop_calls(&self, pattern: &PatternDoc, route: &RouteDoc, start_sec: u32) -> Vec<StopCall> {
@@ -158,8 +169,9 @@ impl SimWorld {
 
         // First frame in which the run is live.
         let frame = self
-            .frames_for(idx, date_yyyymmdd, sec_of_day)
+            .run_frames(idx, date_yyyymmdd, sec_of_day)
             .into_iter()
+            .flatten()
             .find(|f| {
                 let t = f.t_abs - run.start_sec as f64;
                 t >= 0.0 && t <= dur
@@ -174,14 +186,20 @@ impl SimWorld {
         let cur = i.saturating_sub(1);
         let dwelling = t <= pattern.stops[cur].departure_s as f64;
 
-        let (at_station, prev_station, next_stop_ordinal) = if dwelling {
+        let (at_station, prev_station, next_stop_ordinal, current_stop_ordinal) = if dwelling {
             (
                 Some(name_of(cur)),
                 if cur > 0 { Some(name_of(cur - 1)) } else { None },
                 if cur + 1 < stops.len() { Some(cur + 1) } else { None },
+                Some(cur),
             )
         } else {
-            (None, Some(name_of(cur)), Some(cur + 1).filter(|&n| n < stops.len()))
+            (
+                None,
+                Some(name_of(cur)),
+                Some(cur + 1).filter(|&n| n < stops.len()),
+                None,
+            )
         };
 
         let next_arrival_in_s = next_stop_ordinal
@@ -202,13 +220,19 @@ impl SimWorld {
             next_station: next_stop_ordinal.map(name_of),
             next_arrival_in_s,
             next_stop_ordinal,
-            now_sec: run.start_sec as i64 + t as i64,
+            current_stop_ordinal,
             stops,
         })
     }
 
     /// Upcoming calls at one station, soonest first, at most `limit` entries.
     /// Includes a train currently dwelling there (`in_s` slightly negative).
+    ///
+    /// Scans every run, so it stays allocation-light on purpose: service
+    /// activity is resolved once per service rather than once per run, frames
+    /// come back in a fixed array, and the candidate list holds plain indices —
+    /// strings are cloned only for the handful of entries that survive
+    /// truncation. That matters at MVP 5 scale, where run count grows ~10×.
     pub fn station_board(
         &self,
         route_idx: u8,
@@ -220,28 +244,57 @@ impl SimWorld {
         let doc = self.doc();
         let route = doc.routes.get(route_idx as usize)?;
         let station = route.stations.get(station_idx as usize)?;
+
         /// Keep a call visible for this long after it is due, so a dwelling
         /// train does not disappear off the top of the board.
         const GRACE_S: i64 = 90;
+        /// Don't advertise calls further out than this. Without it, a quiet
+        /// late-night board fills with tomorrow morning's runs shown as
+        /// "23h 14m", which reads as a bug.
+        const HORIZON_S: i64 = 2 * 3600;
 
-        let mut entries: Vec<BoardEntry> = Vec::new();
+        // Resolve each service once instead of once per run.
+        let prev = previous_date(date_yyyymmdd);
+        let active: Vec<[bool; 2]> = doc
+            .services
+            .iter()
+            .map(|s| [service_active_on(s, date_yyyymmdd), service_active_on(s, prev)])
+            .collect();
+
+        let now = sec_of_day as i64;
+        // (run_idx, arrival, departure, in_s) — no strings until after sorting.
+        let mut candidates: Vec<(usize, i64, i64, i64)> = Vec::new();
         for (idx, run) in doc.runs.iter().enumerate() {
             let pattern = &doc.patterns[run.pattern_idx as usize];
             if pattern.route_idx != route_idx {
                 continue;
             }
+            // NB: takes the FIRST call at this station. Correct for the Green
+            // Line, where no pattern visits a station twice; a future loop or
+            // branching pattern would need every matching call emitted.
             let Some(stop) = pattern.stops.iter().find(|s| s.station_idx == station_idx) else {
                 continue;
             };
-            for frame in self.frames_for(idx, date_yyyymmdd, sec_of_day) {
+            let [today, yesterday] = active[run.service_idx as usize];
+            for frame in frames(today, yesterday, sec_of_day).into_iter().flatten() {
                 // Into the queried day's frame so times are comparable.
                 let arrival = (run.start_sec + stop.arrival_s) as i64 + frame.to_query_frame;
-                let departure = (run.start_sec + stop.departure_s) as i64 + frame.to_query_frame;
-                let in_s = arrival - sec_of_day as i64;
-                if in_s < -GRACE_S {
+                let in_s = arrival - now;
+                if in_s < -GRACE_S || in_s > HORIZON_S {
                     continue;
                 }
-                entries.push(BoardEntry {
+                let departure = (run.start_sec + stop.departure_s) as i64 + frame.to_query_frame;
+                candidates.push((idx, arrival, departure, in_s));
+            }
+        }
+        candidates.sort_by_key(|c| c.3);
+        candidates.truncate(limit);
+
+        let entries = candidates
+            .into_iter()
+            .map(|(idx, arrival, departure, in_s)| {
+                let pattern = &doc.patterns[doc.runs[idx].pattern_idx as usize];
+                BoardEntry {
                     run_idx: idx as u32,
                     route_idx,
                     headsign: pattern.headsign_en.clone(),
@@ -254,11 +307,9 @@ impl SimWorld {
                     arrival_sec: arrival,
                     departure_sec: departure,
                     in_s,
-                });
-            }
-        }
-        entries.sort_by_key(|e| e.in_s);
-        entries.truncate(limit);
+                }
+            })
+            .collect();
 
         Some(StationBoard {
             route_idx,
@@ -331,6 +382,27 @@ mod tests {
     }
 
     #[test]
+    fn current_stop_ordinal_marks_the_dwelling_stop() {
+        let w = world();
+        // Dwelling at A (ordinal 0) — the UI must not have to infer this from
+        // next_stop_ordinal - 1.
+        let d = w.run_detail(0, WED, 36_010.0).unwrap();
+        assert_eq!(d.current_stop_ordinal, Some(0));
+        assert_eq!(d.next_stop_ordinal, Some(1));
+        // In transit: no current stop at all.
+        let d = w.run_detail(0, WED, 36_065.0).unwrap();
+        assert_eq!(d.current_stop_ordinal, None);
+        assert_eq!(d.next_stop_ordinal, Some(1));
+        // Dwelling at B (ordinal 1).
+        let d = w.run_detail(0, WED, 36_110.0).unwrap();
+        assert_eq!(d.current_stop_ordinal, Some(1));
+        // Terminus: sitting at the last stop, nothing next.
+        let d = w.run_detail(0, WED, 36_200.0).unwrap();
+        assert_eq!(d.current_stop_ordinal, Some(2));
+        assert_eq!(d.next_stop_ordinal, None);
+    }
+
+    #[test]
     fn run_detail_matches_evaluate_liveness() {
         let w = world();
         // Before start, after final arrival, and on a removed holiday: no
@@ -391,6 +463,23 @@ mod tests {
         // Inactive service day -> empty board, not an error.
         let b = w.station_board(0, 1, THU_HOLIDAY, 35_900.0, 10).unwrap();
         assert!(b.entries.is_empty());
+    }
+
+    #[test]
+    fn station_board_drops_calls_beyond_the_horizon() {
+        let w = world();
+        // Run 0 calls at B at 36100. Query 3 h earlier (in_s = 10800 > 2 h
+        // horizon): must not be advertised as "3h 00m" on a quiet board.
+        let b = w.station_board(0, 1, WED, 25_300.0, 10).unwrap();
+        assert!(
+            !b.entries.iter().any(|e| e.run_idx == 0),
+            "call beyond the 2 h horizon must be dropped, got {:?}",
+            b.entries.iter().map(|e| e.in_s).collect::<Vec<_>>()
+        );
+        // Just inside the horizon it comes back.
+        let b = w.station_board(0, 1, WED, 29_500.0, 10).unwrap();
+        assert!(b.entries.iter().any(|e| e.run_idx == 0));
+        assert!(b.entries.iter().all(|e| e.in_s <= 2 * 3600));
     }
 
     #[test]

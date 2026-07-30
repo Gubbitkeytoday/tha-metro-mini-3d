@@ -27,6 +27,7 @@ npm run dev        # Vite dev server at http://localhost:5173
 | `npm run dev` | Vite dev server |
 | `npm run build` | `tsc -b` type-check + production build to `dist/` |
 | `npm run typecheck` | Type-check only |
+| `npm test` | Vitest unit tests (`vitest` for watch mode) |
 | `npm run preview` | Serve the production build |
 | `npm run data:fetch` | Regenerate `src/data/green-line.json` track geometry from OSM Overpass |
 | `npm run data:stations -- <gtfs-dir>` | Merge official station coordinates from an extracted Namtang GTFS feed |
@@ -89,6 +90,6 @@ Any scraped source is a fallback for the **offline preprocessor only**, subject 
 ## Submitting a change
 
 1. Branch off `main`.
-2. Run `npm run build` (type-check + build) and, if you touched Rust, `npm run rust:test`.
+2. Run `npm run build` (type-check + build) and `npm test`; if you touched Rust, `npm run rust:test`.
 3. Update `ENGINE_CONTRACT.md` if you changed anything crossing the Rust↔TS boundary.
 4. Open a pull request describing what changed and which MVP it belongs to.

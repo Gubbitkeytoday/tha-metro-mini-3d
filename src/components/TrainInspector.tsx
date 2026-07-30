@@ -136,13 +136,24 @@ export function TrainInspector() {
             <ol className="space-y-0.5">
               {detail.stops.map((stop, i) => {
                 const isNext = detail.next_stop_ordinal === i;
+                // The stop being dwelt at is neither "next" nor "passed" — the
+                // engine names it outright so this doesn't grey out the very
+                // station the panel above says the train is sitting at.
+                const isCurrent = detail.current_stop_ordinal === i;
                 const passed =
-                  detail.next_stop_ordinal === null || i < detail.next_stop_ordinal;
+                  !isCurrent &&
+                  (detail.next_stop_ordinal === null || i < detail.next_stop_ordinal);
                 return (
                   <li
                     key={`${stop.station_idx}-${i}`}
                     className={`flex items-baseline justify-between gap-2 rounded px-1 py-0.5 text-xs ${
-                      isNext ? "bg-slate-900 text-white" : passed ? "text-slate-400" : "text-slate-700"
+                      isNext
+                        ? "bg-slate-900 text-white"
+                        : isCurrent
+                          ? "bg-slate-200 font-medium text-slate-900"
+                          : passed
+                            ? "text-slate-400"
+                            : "text-slate-700"
                     }`}
                   >
                     <span className="truncate">

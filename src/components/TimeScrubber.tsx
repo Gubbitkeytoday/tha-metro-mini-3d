@@ -24,6 +24,20 @@ export function TimeScrubber() {
   const [sec, setSec] = useState(() => bangkokSecOfDay(Date.now()));
   const [dragging, setDragging] = useState(false);
 
+  // Belt and braces: a pointerup delivered to another element (released off
+  // the slider, or some touch paths) would never clear `dragging`, wedging the
+  // resync effect below and silently stopping the scrubber from tracking.
+  useEffect(() => {
+    if (!dragging) return;
+    const release = () => setDragging(false);
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, [dragging]);
+
   useEffect(() => {
     if (engineStatus !== "ready" || dragging) return;
     const tick = () => {

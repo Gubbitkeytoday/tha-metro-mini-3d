@@ -14,6 +14,8 @@ Node.js is required but **not on the system PATH** on this machine — a portabl
 
 - `npm run dev` — Vite dev server (<http://localhost:5173>)
 - `npm run build` — `tsc -b` type-check + production build (keep gzip total ≤ 5 MB, SRS NF2)
+- `npm test` — Vitest unit tests for pure helpers (`src/**/*.test.ts`); browser-level checks live in `tools/verify-*.mjs`
+- **`src/sim/pkg.d.ts` is the ambient fallback** that keeps `tsc` green when `src/sim/pkg/` hasn't been generated. Add every new `Engine` method to it in the same change, or the no-Rust-toolchain path breaks while local builds stay green.
 - `npm run preview` — serve the production build
 - `npm run data:fetch` — regenerate `src/data/green-line.json` track geometry from OSM Overpass (mirror fallback + User-Agent handled inside `tools/fetch-green-line.mjs`)
 - `node tools/extract-stations.mjs <extracted-gtfs-dir>` — merge official station coords from the Namtang GTFS feed (download: <https://namtang-api.otp.go.th/download/namtang-gtfs.zip>)

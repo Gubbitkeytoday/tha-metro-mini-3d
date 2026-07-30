@@ -315,7 +315,9 @@ impl SimWorld {
 
     /// Upcoming calls at one station, soonest first, at most `limit`.
     /// Keeps a call for GRACE_S = 90 s after it is due so a dwelling train
-    /// does not vanish off the top of the board. None for bad indices.
+    /// does not vanish off the top of the board, and drops anything beyond
+    /// HORIZON_S = 2 h so a quiet late-night board does not advertise
+    /// tomorrow morning as "23h 14m". None for bad indices.
     pub fn station_board(&self, route_idx: u8, station_idx: u16,
                          date_yyyymmdd: u32, sec_of_day: f64, limit: usize)
         -> Option<StationBoard>;
@@ -331,6 +333,20 @@ Both time-taking queries resolve the service day the same two-frame way
 so post-midnight spillover behaves identically across pose and metadata.
 `BoardEntry.arrival_sec` is shifted into the **queried** day's frame, making it
 directly comparable to `sec_of_day`.
+
+`RunDetail` reports **both** `next_stop_ordinal` and `current_stop_ordinal`
+(`Some` only while dwelling). The UI must not derive one from the other:
+`next_stop_ordinal - 1` is the stop the train is sitting at *only* while
+dwelling, and treating it as "passed" greys out the very station the inspector
+says the train is at.
+
+`station_board` scans every run, so it is written to stay allocation-light:
+service activity is resolved once per service rather than once per run, frames
+come back in a fixed `[Option<Frame>; 2]`, and candidates carry indices only —
+strings are cloned after sorting and truncation, for the surviving entries.
+It takes the **first** call at a station in a pattern, which is correct for the
+Green Line; a future loop or branching pattern that calls a station twice would
+need every match emitted.
 
 Wasm surface (`rust-engine/wasm`) — all return JSON strings, `"null"` for a
 `None`:
