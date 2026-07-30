@@ -34,6 +34,14 @@ export function MapContainer() {
       pitch: 55,
       bearing: -15,
       maxPitch: 80,
+      // Default is 3px; ordinary mouse clicks routinely move a few px between
+      // pointerdown/up, which MapLibre's dragPan handler then reclassifies as
+      // a pan (firing dragstart instead of click). Combined with onDragStart
+      // below (which drops `following` on any real pan), that made the very
+      // next click after starting to follow a train cancel it — "follow only
+      // works once." A few extra px absorbs normal click jitter without
+      // affecting genuine drag gestures.
+      clickTolerance: 6,
       // v5+ moved GL context flags out of MapOptions into this bag.
       canvasContextAttributes: { antialias: true },
       attributionControl: {

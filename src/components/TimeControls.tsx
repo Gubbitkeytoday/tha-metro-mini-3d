@@ -42,7 +42,7 @@ export function TimeControls() {
   if (engineStatus === "off") return null;
 
   return (
-    <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 rounded-xl bg-white/85 px-4 py-3 shadow-lg backdrop-blur">
+    <div className="pointer-events-auto rounded-xl bg-white/85 px-4 py-3 shadow-lg backdrop-blur">
       {engineStatus === "error" ? (
         <p className="max-w-xs text-xs text-red-600">
           Engine error: {engineError ?? "unknown"}
