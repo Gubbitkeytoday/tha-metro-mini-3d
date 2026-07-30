@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["sim-core", "wasm", "preprocessor"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+bincode = { version = "2", features = ["serde"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true

@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { GreenLineLayer } from "../map/ThreeLayer";
+import { VehicleManager } from "../map/VehicleManager";
 import { ORIGIN_LNG_LAT } from "../map/coordinates";
+import { SimClient, activeSimClient } from "../sim/SimClient";
 import { useAppStore } from "../stores/useAppStore";
 import greenLine from "../data/green-line.json";
 import type { GreenLineData } from "../types";
@@ -30,16 +32,70 @@ export function MapContainer() {
       new maplibregl.NavigationControl({ visualizePitch: true }),
       "top-right",
     );
+
+    let sim: SimClient | null = null;
+    let rafId = 0;
+
     map.on("style.load", () => {
-      map.addLayer(new GreenLineLayer(greenLine as unknown as GreenLineData));
+      const store = useAppStore.getState();
+      const vehicleManager = new VehicleManager();
+      const layer = new GreenLineLayer(greenLine as unknown as GreenLineData, vehicleManager);
+      map.addLayer(layer);
       setMapReady(true);
+
+      store.setEngineStatus("loading");
+      let lastCountUpdate = 0;
+      sim = new SimClient({
+        onReady: (validation) => {
+          const s = useAppStore.getState();
+          s.setValidation(validation);
+          s.setEngineStatus("ready");
+        },
+        onError: (message) => useAppStore.getState().setEngineStatus("error", message),
+        onClock: (params) => useAppStore.getState().setClock(params),
+        onFrame: (_simEpochMs, count) => {
+          // 10 Hz worker frames -> 1 Hz UI updates (§3A.7).
+          const now = performance.now();
+          if (now - lastCountUpdate >= 1000) {
+            lastCountUpdate = now;
+            useAppStore.getState().setVehicleCount(count);
+          }
+        },
+      });
+      activeSimClient.current = sim;
+
+      // Per-frame path: interpolate + pose instances inside the layer's
+      // render(), entirely outside React.
+      layer.beforeRender = () => {
+        const client = activeSimClient.current;
+        if (!client) return;
+        const { vehicles, count } = client.getInterpolated(performance.now());
+        vehicleManager.update(vehicles, count);
+      };
+
+      // MapLibre only repaints on demand — keep frames coming while the
+      // engine is running.
+      const loop = () => {
+        if (useAppStore.getState().engineStatus === "ready") map.triggerRepaint();
+        rafId = requestAnimationFrame(loop);
+      };
+      rafId = requestAnimationFrame(loop);
     });
+
     if (import.meta.env.DEV) {
-      // dev-only handle for tools/screenshot.mjs camera poses
+      // dev-only handles for tools/screenshot.mjs and tools/verify-*.mjs
       (window as unknown as { __map?: maplibregl.Map }).__map = map;
+      (window as unknown as { __sim?: typeof activeSimClient }).__sim = activeSimClient;
     }
     return () => {
+      cancelAnimationFrame(rafId);
+      activeSimClient.current = null;
+      sim?.dispose();
       map.remove();
+      const store = useAppStore.getState();
+      store.setEngineStatus("off");
+      store.setValidation(null);
+      store.setVehicleCount(0);
       setMapReady(false);
     };
   }, [setMapReady]);

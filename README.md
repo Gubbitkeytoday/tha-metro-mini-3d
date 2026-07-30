@@ -2,7 +2,7 @@
 
 > Interactive, web-based 3D visualization of Bangkok's rail transit network — trains moving on schedule along authentic geography, elevations, and timetables.
 
-**Status:** 🚧 Early development — **MVP 1 delivered** (BTS Green Line 3D track over the map); see the [roadmap](#roadmap). **Repo:** [`tha-metro-mini-3d`](https://github.com/naiiytom/tha-metro-mini-3d)
+**Status:** 🚧 Early development — **MVP 1–3 delivered**: BTS Green Line 3D track, GTFS→binary data pipeline, and scheduled trains moving with time-warp; see the [roadmap](#roadmap). **Repo:** [`tha-metro-mini-3d`](https://github.com/naiiytom/tha-metro-mini-3d)
 
 ---
 
@@ -63,14 +63,14 @@ tha-metro-mini-3d/
 │   ├── map/              # MapLibre ↔ Three.js bridge, vehicle & camera managers
 │   ├── stores/           # Zustand state
 │   └── types/
-├── tools/gtfs_preprocessor/   # GTFS zip → optimized binary
+├── tools/                # data-fetch, verification & screenshot scripts
 ├── index.html
 └── vite.config.ts
 ```
 
 ## Getting started
 
-> Prerequisites: [Node.js](https://nodejs.org/) 18+. (Rust + [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) become prerequisites from MVP 2/3 when the data pipeline and Wasm engine land — not needed yet.)
+> Prerequisites: [Node.js](https://nodejs.org/) 18+. The built Wasm engine (`src/sim/pkg/`) and binary timetable (`public/data/green-line.tmb`) are committed, so a Rust toolchain is **only** needed to regenerate them ([Rust](https://rustup.rs/) + `wasm32-unknown-unknown` target + [`wasm-pack`](https://rustwasm.github.io/wasm-pack/); see `rust-engine/`).
 
 ```bash
 # clone
@@ -99,8 +99,8 @@ Delivered as vertical, shippable slices — track geometry first, then motion, t
 | MVP | Deliverable |
 |-----|-------------|
 | **1** ✅ | **BTS Green Line track laid** — 3D geometry over the map, no trains. Proves the full render pipeline. **Delivered:** MapLibre (OpenFreeMap vector tiles) + Three.js custom layer with floating-origin coordinates; spline-smoothed elevated track for both branches; station markers; free orbit camera. |
-| 2 | Green Line data pipeline — GTFS → binary cache, loaded & validated client-side. |
-| 3 | Green Line trains moving — Wasm interpolation engine + Web Worker. |
+| **2** ✅ | Green Line data pipeline — GTFS → binary cache, loaded & validated client-side. **Delivered:** Rust preprocessor expands the frequency-based Namtang feed (14 patterns → 2,162 runs, 61 stations snapped onto track) into a 123 KB bincode cache (71 KB gzip vs 3 MB budget); client validation summary shown in the UI. |
+| **3** ✅ | Green Line trains moving — Wasm interpolation engine + Web Worker. **Delivered:** 93 KB Wasm engine (dwell/transit/smoothstep/tangent-yaw) evaluated at 10 Hz in a worker, transferable-buffer ping-pong, render-side interpolation, InstancedMesh 4-car trains (2 draw calls), 1×/5×/10×/60× time-warp with Bangkok clock. |
 | 4 | Interaction & UI — follow-cam, inspector, time scrubber, timetable drawer. |
 | 5 | Multi-line breadth — Purple, ARL, Pink, Yellow, Gold, Red. |
 | 6 | Underground + polish — MRT Blue, Orange (track only), transparency mode, day/night lighting. |

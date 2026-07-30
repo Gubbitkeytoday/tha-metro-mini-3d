@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**MVP 1 delivered** (2026-07-30): BTS Green Line rendered as elevated 3D track (both branches + station markers) over a MapLibre base map via a custom Three.js layer with floating-origin coordinates. MVP 2 (GTFS data pipeline / Rust CLI) is next; there is no Rust code yet — `rust-engine/` and the Wasm engine start at MVP 2/3.
+**MVP 1–3 delivered** (2026-07-30): BTS Green Line elevated 3D track over MapLibre (MVP 1), Rust GTFS preprocessor → 123 KB binary cache with client-side validation (MVP 2), and scheduled trains moving via a Wasm interpolation engine in a Web Worker with 1×/5×/10×/60× time-warp (MVP 3). Next: MVP 4 (follow-camera, inspectors, time scrubber).
 
 The full design record is [`SRS.md`](./SRS.md) (versioned SRS, v1.0.0). Read §3A before writing any code that touches the MapLibre↔Three.js bridge, the Worker/Wasm boundary, or the serialization format — those decisions are deliberate and expensive to reverse.
 
@@ -19,7 +19,12 @@ Node.js is required but **not on the system PATH** on this machine — a portabl
 - `node tools/extract-stations.mjs <extracted-gtfs-dir>` — merge official station coords from the Namtang GTFS feed (download: <https://namtang-api.otp.go.th/download/namtang-gtfs.zip>)
 - `node tools/screenshot.mjs [url] [outDir]` — headless-Edge screenshots from several camera poses (uses `puppeteer-core`, installed with `--no-save`; in dev builds the map instance is exposed as `window.__map` for this)
 
-There are no tests yet (SRS §10 defines the acceptance criteria that testing will target).
+Rust toolchain (`stable-x86_64-pc-windows-gnu` — chosen because no MSVC build tools exist on this machine; plus `wasm32-unknown-unknown`, wasm-pack 0.13.1) lives at `%USERPROFILE%\.cargo\bin`, also **not on PATH**:
+
+- `cargo test` (in `rust-engine/`) — 15 sim-core/preprocessor unit tests
+- `cargo run -p preprocessor --release -- --gtfs <extracted-gtfs-dir> --track src/data/green-line.json --out public/data/green-line.tmb --report public/data/green-line.report.json` — regenerate the binary timetable cache
+- `wasm-pack build rust-engine/wasm --release --target web --out-dir ../../src/sim/pkg` — rebuild the Wasm engine (the built `src/sim/pkg/` and `public/data/green-line.tmb` are **committed**, so plain `npm run dev` works without a Rust toolchain; delete wasm-pack's generated `src/sim/pkg/.gitignore` if it reappears — it contains `*`)
+- `node tools/verify-kinematics.mjs` / `node tools/verify-closeup.mjs` — data-level motion assertions / camera-on-a-train screenshot against the dev server (dev exposes `window.__sim` for these)
 
 ## Git conventions
 
@@ -33,6 +38,16 @@ There are no tests yet (SRS §10 defines the acceptance criteria that testing wi
 - **Base map is OpenFreeMap's Liberty style** (`https://tiles.openfreemap.org/styles/liberty`) — vector tiles, free, no API key, includes 3D building extrusions that correctly depth-occlude the track.
 - **Data provenance:** track geometry = OSM route relations 444651 (Sukhumvit) + 2067854 (Silom) via Overpass, ODbL; station coords = Namtang GTFS `route_id` 1 & 2, CC-BY 4.0. Both attributions render in the map's attribution control — keep them.
 - maplibre-gl is pinned to v4 (`^4.7.1`): v5 changed the custom-layer `render()` signature to an args object. If upgrading, adapt `ThreeLayer.render()`.
+
+## Implementation notes (learned in MVP 2/3 — engine & pipeline)
+
+- **`docs/ENGINE_CONTRACT.md` is the interface spec** for the cache format, stride-8 `Float32Array` vehicle buffer, worker protocol, and wasm API. Update it when any of those change — it's what keeps the Rust and TS sides in sync.
+- **The Namtang feed is frequency-based for BTS**: routes 1/2 have 14 trip *patterns* with relative `stop_times` (starting 00:00:00) expanded via `frequencies.txt` headway windows (06:00–24:00). The preprocessor (`rust-engine/preprocessor`) expands them into ~2,162 concrete runs. Service 1 = weekdays, 2 = weekends, with 42 Thai-holiday `calendar_dates` exceptions.
+- **MapLibre's earth radius is 6371008.8 m** (`src/geo/lng_lat.ts`), NOT the WGS84 circumference — `sim-core/src/geo.rs` replicates MapLibre's exact math so Rust ENU output matches `src/map/coordinates.ts` to sub-millimeter (unit-tested). Don't "fix" it to 40075016.686.
+- **Engine positions are a pure function of time** (no integration): worker evaluates at 10 Hz into pooled transferable buffers (3-buffer ping-pong, never allocates on the frame path); `SimClient.getInterpolated` lerps the two latest frames matched by `run_idx`. Per-frame data never touches React/Zustand.
+- **Trains are 2 draw calls total**: one merged vertex-colored geometry per route in `VehicleManager` (InstancedMesh, capacity 512). Keep it that way as lines are added (SRS §3A.5).
+- Bangkok time = UTC+7 fixed (no DST); the worker splits `simEpochMs + 7 h` into `date_yyyymmdd` + `sec_of_day` via UTC getters, and the engine also evaluates the *previous* service day at `sec+86400` for post-midnight spillover.
+- Kheha (stop 13608) snaps 63.9 m from the OSM track end — genuine terminus geometry offset, under the 150 m hard limit; every other stop snaps < 40 m.
 
 ## What this project is
 
