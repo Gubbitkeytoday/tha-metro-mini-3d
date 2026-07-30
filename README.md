@@ -2,7 +2,7 @@
 
 > Interactive, web-based 3D visualization of Bangkok's rail transit network — trains moving on schedule along authentic geography, elevations, and timetables.
 
-**Status:** 🚧 Early development — see the [roadmap](#roadmap). **Repo:** [`tha-metro-mini-3d`](https://github.com/naiiytom/tha-metro-mini-3d)
+**Status:** 🚧 Early development — **MVP 1 delivered** (BTS Green Line 3D track over the map); see the [roadmap](#roadmap). **Repo:** [`tha-metro-mini-3d`](https://github.com/naiiytom/tha-metro-mini-3d)
 
 ---
 
@@ -70,24 +70,27 @@ tha-metro-mini-3d/
 
 ## Getting started
 
-> Prerequisites: [Node.js](https://nodejs.org/) 18+, [Rust](https://rustup.rs/) with the `wasm32-unknown-unknown` target, and [`wasm-pack`](https://rustwasm.github.io/wasm-pack/).
+> Prerequisites: [Node.js](https://nodejs.org/) 18+. (Rust + [`wasm-pack`](https://rustwasm.github.io/wasm-pack/) become prerequisites from MVP 2/3 when the data pipeline and Wasm engine land — not needed yet.)
 
 ```bash
 # clone
 git clone https://github.com/naiiytom/tha-metro-mini-3d.git
 cd tha-metro-mini-3d
 
-# install frontend deps
+# install deps and run the dev server
 npm install
-
-# build the Rust → Wasm engine
-cd rust-engine && wasm-pack build --release && cd ..
-
-# run the dev server
 npm run dev
 ```
 
-*(Exact scripts will be added as the project scaffolds — see the roadmap for what exists at each stage.)*
+Other scripts:
+
+| Command | What it does |
+|---------|--------------|
+| `npm run build` | Type-check (`tsc -b`) + production build to `dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm run data:fetch` | Regenerate `src/data/green-line.json` track geometry from OpenStreetMap (Overpass) |
+| `node tools/extract-stations.mjs <gtfs-dir>` | Merge official station coordinates from an extracted [Namtang GTFS](https://namtang-api.otp.go.th/opendata) feed |
+| `node tools/screenshot.mjs [url] [outDir]` | Headless-browser screenshots from several camera poses (visual check) |
 
 ## Roadmap
 
@@ -95,7 +98,7 @@ Delivered as vertical, shippable slices — track geometry first, then motion, t
 
 | MVP | Deliverable |
 |-----|-------------|
-| **1** | **BTS Green Line track laid** — 3D geometry over the map, no trains. Proves the full render pipeline. |
+| **1** ✅ | **BTS Green Line track laid** — 3D geometry over the map, no trains. Proves the full render pipeline. **Delivered:** MapLibre (OpenFreeMap vector tiles) + Three.js custom layer with floating-origin coordinates; spline-smoothed elevated track for both branches; station markers; free orbit camera. |
 | 2 | Green Line data pipeline — GTFS → binary cache, loaded & validated client-side. |
 | 3 | Green Line trains moving — Wasm interpolation engine + Web Worker. |
 | 4 | Interaction & UI — follow-cam, inspector, time scrubber, timetable drawer. |
@@ -104,8 +107,9 @@ Delivered as vertical, shippable slices — track geometry first, then motion, t
 
 ## Data & licensing
 
-- Transit schedules: static **GTFS** (Namtang / OTP open-data programme).
-- Geometry fallback: **OpenStreetMap** — © OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/); attribution required.
+- Transit schedules & station coordinates: static **GTFS** ([Namtang / OTP open-data programme](https://namtang-api.otp.go.th/opendata), CC-BY 4.0).
+- Track geometry: **OpenStreetMap** — © OpenStreetMap contributors, [ODbL](https://opendatacommons.org/licenses/odbl/); attribution required (rendered in the map attribution control).
+- Base map: [OpenFreeMap](https://openfreemap.org/) vector tiles (Liberty style).
 - Any scraped source is a fallback only, used in the offline preprocessor, subject to the source's terms.
 
 ## License
