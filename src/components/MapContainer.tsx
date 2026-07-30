@@ -10,8 +10,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { GreenLineLayer } from "../map/ThreeLayer";
 import { installCameraControls } from "../map/cameraControls";
+import { FollowCamera } from "../map/followCamera";
+import { pickAt } from "../map/selection";
 import { VehicleManager } from "../map/VehicleManager";
-import { ORIGIN_LNG_LAT } from "../map/coordinates";
+import { localToLngLat, ORIGIN_LNG_LAT } from "../map/coordinates";
 import { SimClient, activeSimClient } from "../sim/SimClient";
 import { useAppStore } from "../stores/useAppStore";
 import greenLine from "../data/green-line.json";
@@ -44,6 +46,11 @@ export function MapContainer() {
 
     let sim: SimClient | null = null;
     let rafId = 0;
+    const follow = new FollowCamera();
+    // Latest interpolated poses, kept for click hit-testing. Owned by the
+    // render path — never copied into React state (§3A.7).
+    let lastVehicles: Float32Array<ArrayBufferLike> = new Float32Array(0);
+    let lastCount = 0;
 
     map.on("style.load", () => {
       const store = useAppStore.getState();
@@ -59,6 +66,12 @@ export function MapContainer() {
           const s = useAppStore.getState();
           s.setValidation(validation);
           s.setEngineStatus("ready");
+          // Static station list, fetched once — powers click hit-testing and
+          // the station board's indices (contract §8).
+          void sim
+            ?.getStations()
+            .then((stations) => useAppStore.getState().setStations(stations))
+            .catch(() => undefined);
         },
         onError: (message) => useAppStore.getState().setEngineStatus("error", message),
         onClock: (params) => useAppStore.getState().setClock(params),
@@ -79,26 +92,68 @@ export function MapContainer() {
         const client = activeSimClient.current;
         if (!client) return;
         const { vehicles, count } = client.getInterpolated(performance.now());
-        vehicleManager.update(vehicles, count);
+        const { selectedRunIdx, following } = useAppStore.getState();
+        vehicleManager.update(vehicles, count, selectedRunIdx);
+        // Read the follow target here (the buffer is already in hand) but move
+        // the camera in the rAF loop — jumpTo() inside render() re-enters
+        // MapLibre's render path.
+        follow.capture(vehicles, count, following ? selectedRunIdx : null);
+        lastVehicles = vehicles;
+        lastCount = count;
       };
 
       // MapLibre only repaints on demand — keep frames coming while the
       // engine is running.
       const loop = () => {
-        if (useAppStore.getState().engineStatus === "ready") map.triggerRepaint();
+        if (useAppStore.getState().engineStatus === "ready") {
+          follow.apply(map);
+          map.triggerRepaint();
+        }
         rafId = requestAnimationFrame(loop);
       };
       rafId = requestAnimationFrame(loop);
     });
 
+    // Click to select a train or station. Uses the most recent interpolated
+    // buffer — the same poses that are on screen.
+    const onMapClick = (e: { point: { x: number; y: number } }) => {
+      const { stations, selectRun, selectStation } = useAppStore.getState();
+      const hit = pickAt(map, lastVehicles, lastCount, stations, e.point);
+      if (!hit) return;
+      if (hit.type === "vehicle") {
+        selectRun(hit.runIdx);
+      } else {
+        selectStation({ routeIdx: hit.routeIdx, stationIdx: hit.stationIdx });
+      }
+    };
+    map.on("click", onMapClick);
+
+    // Releasing follow must also clear the smoothed bearing, or the next
+    // follow starts from a stale heading.
+    const unsubscribeFollow = useAppStore.subscribe((state, prev) => {
+      if (prev.following && !state.following) follow.reset();
+    });
+
     if (import.meta.env.DEV) {
       // dev-only handles for tools/screenshot.mjs and tools/verify-*.mjs
-      (window as unknown as { __map?: MapLibreMap }).__map = map;
-      (window as unknown as { __sim?: typeof activeSimClient }).__sim = activeSimClient;
+      const dev = window as unknown as {
+        __map?: MapLibreMap;
+        __sim?: typeof activeSimClient;
+        __store?: typeof useAppStore;
+        __localToLngLat?: typeof localToLngLat;
+      };
+      dev.__map = map;
+      dev.__sim = activeSimClient;
+      // verify-mvp4.mjs needs these to drive selection and to convert engine
+      // ENU positions into screen pixels for a real click.
+      dev.__store = useAppStore;
+      dev.__localToLngLat = localToLngLat;
     }
     return () => {
       cancelAnimationFrame(rafId);
       removeCameraControls();
+      unsubscribeFollow();
+      map.off("click", onMapClick);
       activeSimClient.current = null;
       sim?.dispose();
       map.remove();
@@ -106,6 +161,9 @@ export function MapContainer() {
       store.setEngineStatus("off");
       store.setValidation(null);
       store.setVehicleCount(0);
+      store.selectRun(null);
+      store.selectStation(null);
+      store.setStations([]);
       setMapReady(false);
     };
   }, [setMapReady]);

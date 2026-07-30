@@ -11,6 +11,18 @@ export class Engine {
     evaluate(date_yyyymmdd: number, sec_of_day: number, out: Float32Array): number;
     constructor(cache_bytes: Uint8Array);
     /**
+     * `RunDetail` as JSON, or `"null"` when the run is not live at that time.
+     */
+    run_detail_json(run_idx: number, date_yyyymmdd: number, sec_of_day: number): string;
+    /**
+     * `StationBoard` as JSON, or `"null"` for unknown route/station indices.
+     */
+    station_board_json(route_idx: number, station_idx: number, date_yyyymmdd: number, sec_of_day: number, limit: number): string;
+    /**
+     * All stations with ENU positions, as JSON. Fetched once after init.
+     */
+    stations_json(): string;
+    /**
      * ValidationSummary as JSON (stations/patterns/runs/services/feed_version).
      */
     validation_json(): string;
@@ -30,6 +42,9 @@ export interface InitOutput {
     readonly __wbg_engine_free: (a: number, b: number) => void;
     readonly engine_evaluate: (a: number, b: number, c: number, d: number, e: number, f: any) => number;
     readonly engine_new: (a: number, b: number) => [number, number, number];
+    readonly engine_run_detail_json: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly engine_station_board_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly engine_stations_json: (a: number) => [number, number];
     readonly engine_validation_json: (a: number) => [number, number];
     readonly max_vehicles: () => number;
     readonly vehicle_stride: () => number;

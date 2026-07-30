@@ -4,12 +4,14 @@
 pub mod calendar;
 pub mod geo;
 pub mod model;
+pub mod query;
 pub mod world;
 
 pub use model::{
     CacheDoc, PatternDoc, PatternStop, RouteDoc, RunDoc, ServiceDoc, StationDoc, TMB_MAGIC,
     TMB_VERSION,
 };
+pub use query::{BoardEntry, RunDetail, StationBoard, StationInfo, StopCall};
 pub use world::{
     CacheError, SimWorld, ValidationSummary, MAX_VEHICLES, VEHICLE_STRIDE,
 };

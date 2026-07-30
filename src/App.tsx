@@ -1,5 +1,8 @@
 import { MapContainer } from "./components/MapContainer";
+import { StationBoard } from "./components/StationBoard";
 import { TimeControls } from "./components/TimeControls";
+import { TimeScrubber } from "./components/TimeScrubber";
+import { TrainInspector } from "./components/TrainInspector";
 import { useAppStore } from "./stores/useAppStore";
 
 export default function App() {
@@ -13,7 +16,7 @@ export default function App() {
           Greater Bangkok Metro Mini 3D
         </h1>
         <p className="text-xs text-slate-500">
-          MVP 3 — BTS Green Line live schedule {mapReady ? "" : "· loading map…"}
+          MVP 4 — BTS Green Line live schedule {mapReady ? "" : "· loading map…"}
         </p>
         <ul className="mt-2 space-y-1 text-xs text-slate-700">
           <li className="flex items-center gap-2">
@@ -25,7 +28,11 @@ export default function App() {
             Silom Line (National Stadium – Bang Wa)
           </li>
         </ul>
+        <p className="mt-2 text-[10px] text-slate-400">Click a train or station to inspect it.</p>
       </div>
+      <TrainInspector />
+      <StationBoard />
+      <TimeScrubber />
       <TimeControls />
     </div>
   );

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ValidationSummary } from "../sim/protocol";
+import type { StationInfo, ValidationSummary } from "../sim/protocol";
 import type { ClockParams } from "../sim/SimClient";
 
 /**
@@ -33,6 +33,24 @@ interface AppState {
   /** Throttled to 1 Hz by MapContainer — never per-frame. */
   vehicleCount: number;
   setVehicleCount: (count: number) => void;
+
+  // ---- MVP 4 selection (UI-derived; the pose itself stays out of here) ----
+
+  /** Selected train, identified by its run index (vehicle lane 5). */
+  selectedRunIdx: number | null;
+  /** Selected station, as the indices the engine's board query takes. */
+  selectedStation: { routeIdx: number; stationIdx: number } | null;
+  /** Third-person camera locked to the selected train (F3.2). */
+  following: boolean;
+
+  /** Selecting a train clears any station selection, and vice versa. */
+  selectRun: (runIdx: number | null) => void;
+  selectStation: (station: { routeIdx: number; stationIdx: number } | null) => void;
+  setFollowing: (following: boolean) => void;
+
+  /** Static station list from the engine, fetched once at ready. */
+  stations: StationInfo[];
+  setStations: (stations: StationInfo[]) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -54,4 +72,25 @@ export const useAppStore = create<AppState>((set) => ({
 
   vehicleCount: 0,
   setVehicleCount: (count) => set({ vehicleCount: count }),
+
+  selectedRunIdx: null,
+  selectedStation: null,
+  following: false,
+
+  selectRun: (runIdx) =>
+    set(
+      runIdx === null
+        ? { selectedRunIdx: null, following: false }
+        : { selectedRunIdx: runIdx, selectedStation: null },
+    ),
+  selectStation: (station) =>
+    set(
+      station === null
+        ? { selectedStation: null }
+        : { selectedStation: station, selectedRunIdx: null, following: false },
+    ),
+  setFollowing: (following) => set({ following }),
+
+  stations: [],
+  setStations: (stations) => set({ stations }),
 }));

@@ -1,0 +1,118 @@
+import { useEffect, useState } from "react";
+import type { StationBoard as StationBoardData } from "../sim/protocol";
+import { activeSimClient } from "../sim/SimClient";
+import { formatCountdown, formatServiceSec } from "../sim/time";
+import { useAppStore } from "../stores/useAppStore";
+
+/**
+ * Live timetable drawer for the selected station (F4.3): the next scheduled
+ * calls, soonest first, straight from the engine's own schedule so it can
+ * never drift from the trains on screen.
+ *
+ * Polled at 1 Hz — cache-derived data, never on the frame path (§3A.7).
+ * Clicking a row selects that train, handing off to the inspector.
+ */
+
+const POLL_MS = 1000;
+const LIMIT = 10;
+
+export function StationBoard() {
+  const selectedStation = useAppStore((s) => s.selectedStation);
+  const selectStation = useAppStore((s) => s.selectStation);
+  const selectRun = useAppStore((s) => s.selectRun);
+  const [board, setBoard] = useState<StationBoardData | null>(null);
+
+  const routeIdx = selectedStation?.routeIdx;
+  const stationIdx = selectedStation?.stationIdx;
+
+  useEffect(() => {
+    if (routeIdx === undefined || stationIdx === undefined) {
+      setBoard(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      const client = activeSimClient.current;
+      if (!client) return;
+      try {
+        const b = await client.getStationBoard(
+          routeIdx,
+          stationIdx,
+          client.getSimNow(),
+          LIMIT,
+        );
+        if (!cancelled) setBoard(b);
+      } catch {
+        // Worker torn down mid-flight; re-queried on the next selection.
+      }
+    };
+    void poll();
+    const id = setInterval(() => void poll(), POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [routeIdx, stationIdx]);
+
+  if (!selectedStation) return null;
+
+  return (
+    <div className="pointer-events-auto absolute right-4 top-4 flex max-h-[calc(100dvh-2rem)] w-72 flex-col overflow-hidden rounded-xl bg-white/90 shadow-lg backdrop-blur">
+      <div className="flex items-start gap-2 border-b border-slate-200 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-slate-900">
+            {board ? `${board.code ? `${board.code} · ` : ""}${board.name_en}` : "Station"}
+          </p>
+          <p className="truncate text-xs text-slate-500">{board?.name_th ?? ""}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => selectStation(null)}
+          aria-label="Close station board"
+          className="rounded-md px-1.5 py-0.5 text-sm leading-none text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+        >
+          ×
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        <p className="px-2 pb-1 text-[10px] uppercase tracking-wide text-slate-400">
+          Next departures
+        </p>
+        {!board ? (
+          <p className="px-2 py-2 text-xs text-slate-500">Loading…</p>
+        ) : board.entries.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-slate-500">
+            No further services scheduled today.
+          </p>
+        ) : (
+          <ul className="space-y-0.5">
+            {board.entries.map((e) => (
+              <li key={`${e.run_idx}-${e.arrival_sec}`}>
+                <button
+                  type="button"
+                  onClick={() => selectRun(e.run_idx)}
+                  className="flex w-full items-baseline justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 transition-colors hover:bg-slate-200"
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-medium text-slate-900">{e.destination}</span>
+                    <span className="ml-1 text-slate-400">
+                      {formatServiceSec(e.departure_sec)}
+                    </span>
+                  </span>
+                  <span
+                    className={`shrink-0 font-mono tabular-nums ${
+                      e.in_s <= 0 ? "font-semibold text-slate-900" : ""
+                    }`}
+                  >
+                    {formatCountdown(e.in_s)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
