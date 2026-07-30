@@ -1,0 +1,15 @@
+{
+  "name": "metro-sim-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "metro_sim_wasm_bg.wasm",
+    "metro_sim_wasm.js",
+    "metro_sim_wasm.d.ts"
+  ],
+  "main": "metro_sim_wasm.js",
+  "types": "metro_sim_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

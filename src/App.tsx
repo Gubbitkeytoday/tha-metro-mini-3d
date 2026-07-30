@@ -1,4 +1,5 @@
 import { MapContainer } from "./components/MapContainer";
+import { TimeControls } from "./components/TimeControls";
 import { useAppStore } from "./stores/useAppStore";
 
 export default function App() {
@@ -12,7 +13,7 @@ export default function App() {
           Thailand Metro Mini 3D
         </h1>
         <p className="text-xs text-slate-500">
-          MVP 1 — BTS Green Line track {mapReady ? "" : "· loading map…"}
+          MVP 3 — BTS Green Line live schedule {mapReady ? "" : "· loading map…"}
         </p>
         <ul className="mt-2 space-y-1 text-xs text-slate-700">
           <li className="flex items-center gap-2">
@@ -25,6 +26,7 @@ export default function App() {
           </li>
         </ul>
       </div>
+      <TimeControls />
     </div>
   );
 }

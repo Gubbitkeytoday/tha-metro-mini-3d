@@ -1,0 +1,308 @@
+# Engine Contract — MVP 2 (data pipeline) + MVP 3 (simulation)
+
+Authoritative interface spec between the Rust side (preprocessor CLI, sim core,
+Wasm bindings) and the TypeScript side (worker, loader, rendering). Both sides
+are implemented against THIS document. If something here proves impossible,
+stop and flag it rather than silently deviating.
+
+SRS references: F1.1–F1.2 (pipeline), F2.1–F2.3 (motion), §3A.2 (flat buffer
+API), §3A.3 (transferable buffers, NO SharedArrayBuffer), §3A.7 (fixed-cadence
+sim, render-side interpolation, Zustand = UI state only).
+
+## 0. Source-data facts (verified against the live Namtang feed, 2026-07-30)
+
+- Feed: https://namtang-api.otp.go.th/download/namtang-gtfs.zip (CC-BY 4.0),
+  `feed_version 20260729`, valid 20260101–20261231, timezone Asia/Bangkok
+  (UTC+7, no DST).
+- BTS Green Line = `route_id "1"` (Sukhumvit, color 65b724) and `route_id "2"`
+  (Silom, color 246B5B), agency BTSC.
+- **The feed is frequency-based.** Routes 1/2 have exactly 14 trip rows — these
+  are *patterns*, not runs. Their `stop_times` are offsets starting at
+  00:00:00 (first stop) — RELATIVE times. `frequencies.txt` (348 rows for
+  these trips) defines service windows 06:00–24:00 with `headway_secs`
+  207–480. `exact_times` column is absent ⇒ 0 (non-exact); we treat headways
+  as an exact schedule for visualization: starts at
+  `start_time, start_time+h, …` while `< end_time`.
+- Patterns include short-turn services (Mo Chit, Samrong turnbacks) with their
+  own shape_ids and frequency windows.
+- `calendar.txt`: service "1" = Mon–Fri, service "2" = Sat–Sun (2023-01-01 →
+  2026-12-31). `calendar_dates.txt` has 42 exceptions for these services
+  (Thai holidays: type 2 removes weekday service, type 1 adds weekend service).
+- `stop_times` for these patterns have real dwell times (arrival ≠ departure,
+  e.g. 30 s dwells).
+
+## 1. Repository layout (worktree)
+
+```text
+rust-engine/                 # Cargo WORKSPACE root
+├── Cargo.toml               # [workspace] members = ["sim-core", "wasm", "preprocessor"]
+├── sim-core/                # pure Rust lib: cache model + interpolation. NO wasm deps.
+├── wasm/                    # wasm-bindgen bindings crate (cdylib), name: metro-sim-wasm
+└── preprocessor/            # CLI bin: GTFS dir + green-line.json -> cache blob
+public/data/green-line.tmb   # generated binary cache (committed)
+src/sim/                     # TS: worker, loader, protocol types, clock store integration
+src/sim/protocol.ts          # message + buffer-layout constants (mirror of this doc)
+```
+
+`tools/gtfs_preprocessor/` from the SRS §6 sketch is realized as
+`rust-engine/preprocessor` (one workspace, less duplication). Do not create
+`tools/gtfs_preprocessor/`.
+
+## 2. Binary cache format — `green-line.tmb` (TMB = Thai Metro Binary)
+
+Serialization: **bincode 2** (`bincode = { version = "2", features = ["serde"] }`,
+`bincode::serde::encode_to_vec / decode_from_slice`, standard config) of the
+`CacheDoc` struct below, then the client fetches it as `ArrayBuffer`.
+Rationale vs SRS §3A.6: producer and consumer are both our Rust; the blob is
+< 1 MB and parsed once at load, so rkyv's zero-copy advantage is negligible
+here — bincode chosen for simplicity. Re-evaluate rkyv when the full network
+(MVP 5) grows the cache.
+
+```rust
+// sim-core/src/model.rs — exact field order matters (bincode).
+pub const TMB_MAGIC: u32 = 0x544D_4231; // "TMB1"
+
+#[derive(Serialize, Deserialize)]
+pub struct CacheDoc {
+    pub magic: u32,              // TMB_MAGIC
+    pub version: u16,            // 1
+    pub feed_version: String,    // "20260729"
+    pub generated_unix: i64,
+    pub origin_lng: f64,         // MUST equal frontend ORIGIN_LNG_LAT
+    pub origin_lat: f64,         // (100.5332, 13.7456)
+    pub routes: Vec<RouteDoc>,   // [0]=Sukhumvit(route_id 1), [1]=Silom(route_id 2)
+    pub services: Vec<ServiceDoc>,
+    pub patterns: Vec<PatternDoc>,
+    pub runs: Vec<RunDoc>,       // sorted by (service_idx, start_sec)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RouteDoc {
+    pub gtfs_route_id: String,   // "1" / "2"
+    pub name_en: String,
+    pub color_rgb: u32,          // 0x65B724 / 0x246B5B
+    /// Track polyline in LOCAL ENU METERS relative to (origin_lng, origin_lat),
+    /// Catmull-Rom resampled at ~10 m spacing by the preprocessor.
+    /// x=east, y=north, z=up(+15.0). Same frame as src/map/coordinates.ts.
+    pub track_xyz: Vec<[f32; 3]>,
+    /// Cumulative arc length in meters, same length as track_xyz, [0]=0.
+    pub track_arc_m: Vec<f32>,
+    pub stations: Vec<StationDoc>, // ordered by arc_m ascending
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct StationDoc {
+    pub gtfs_stop_id: String,
+    pub code: String,            // e.g. "N8"
+    pub name_en: String,
+    pub name_th: String,
+    /// Station snapped ONTO the track polyline: arc-length position in meters.
+    pub arc_m: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ServiceDoc {
+    pub gtfs_service_id: String,
+    pub weekday_mask: u8,        // bit0=Monday … bit6=Sunday
+    pub start_date: u32,         // YYYYMMDD inclusive
+    pub end_date: u32,           // YYYYMMDD inclusive
+    pub added_dates: Vec<u32>,   // calendar_dates exception_type 1
+    pub removed_dates: Vec<u32>, // calendar_dates exception_type 2
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PatternDoc {
+    pub gtfs_trip_id: String,
+    pub route_idx: u8,           // index into routes
+    pub direction: u8,           // GTFS direction_id
+    pub headsign_en: String,
+    /// Per stop of this pattern, in sequence order:
+    pub stops: Vec<PatternStop>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PatternStop {
+    pub station_idx: u16,        // index into routes[route_idx].stations
+    pub arrival_s: u32,          // offset from run start (first stop = 0)
+    pub departure_s: u32,        // >= arrival_s (dwell)
+    pub arc_m: f32,              // copy of station arc_m (denormalized for speed)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RunDoc {
+    pub pattern_idx: u16,
+    pub service_idx: u8,
+    pub start_sec: u32,          // seconds after service-day midnight (can be >= 86400 conceptually? no: frequencies end 24:00 -> start_sec < 86400; ARRIVALS may exceed 86400)
+}
+```
+
+Preprocessor CLI:
+
+```text
+cargo run -p preprocessor --release -- \
+  --gtfs <extracted-gtfs-dir> --track <path-to-src/data/green-line.json> \
+  --out public/data/green-line.tmb [--report <path.json>]
+```
+
+- Builds each route's track from green-line.json branches (sukhumvit→routes[0],
+  silom→routes[1]): Catmull-Rom (centripetal) resample at ~10 m, offset z=+15.
+- Snaps each GTFS stop (by lat/lng) onto the resampled polyline → `arc_m`
+  (nearest point on any segment; reject snaps > 150 m with a hard error).
+- Direction handling: `arc_m` is measured along the branch polyline as stored;
+  direction_id 1 patterns simply have DEcreasing arc_m across their stop list.
+  The engine interpolates arc between consecutive stops either way — no
+  reversal logic anywhere else.
+- Stop→station mapping: GTFS stops for routes 1/2 match green-line.json
+  station ids (same feed) — but match by `stop_id`; fall back to nearest-
+  by-distance with a warning.
+- Expands frequencies: for each frequency window of a pattern's trip, runs
+  start at `start_time + k*headway_secs` for k=0.. while `< end_time`.
+- Writes `--report` JSON: `{stations, patterns, runs, services, bytes,
+  gzip_bytes, per_route: [...]}` — used by tests and by the client-validation
+  cross-check test.
+- MUST fail loudly (non-zero exit + message) on: missing required files,
+  empty expansion, snap distance > 150 m, unknown stop ids.
+
+## 3. sim-core API (pure Rust — unit-testable without wasm)
+
+```rust
+pub struct SimWorld { /* built from CacheDoc */ }
+
+pub const VEHICLE_STRIDE: usize = 8;      // f32 lanes per vehicle
+pub const MAX_VEHICLES: usize = 512;
+
+impl SimWorld {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CacheError>;
+    pub fn validation(&self) -> ValidationSummary; // counts for the report
+
+    /// Evaluate scheduled vehicle states at an absolute Bangkok local time.
+    /// `date_yyyymmdd` + `sec_of_day` (0..86400) — LOCAL Bangkok date/time.
+    /// Also evaluates the PREVIOUS service day's runs at sec_of_day+86400 to
+    /// catch post-midnight spillover.
+    /// Writes up to MAX_VEHICLES records into `out` (len >= MAX_VEHICLES*8),
+    /// returns the vehicle count.
+    pub fn evaluate(&self, date_yyyymmdd: u32, sec_of_day: f64, out: &mut [f32]) -> usize;
+}
+```
+
+Vehicle record layout (stride 8 × f32) — **identical constants in
+`src/sim/protocol.ts`**:
+
+| lane | name      | meaning |
+|------|-----------|---------|
+| 0    | `x`       | east meters (local ENU frame, shared origin) |
+| 1    | `y`       | north meters |
+| 2    | `z`       | up meters |
+| 3    | `yaw`     | radians, CCW from +x (east), from track tangent, **direction of travel** |
+| 4    | `state`   | 0 = dwelling at a station, 1 = in transit |
+| 5    | `run_idx` | index into CacheDoc.runs (exact f32 up to 2^24 — fine) |
+| 6    | `route_idx` | 0 = Sukhumvit, 1 = Silom |
+| 7    | `progress`| 0..1 smoothed progress of current inter-station leg (0 while dwelling) |
+
+Motion math (F2.1/F2.2): for time `t` within a run, find the bracketing
+`PatternStop`s A→B. Dwell if `arr_A ≤ t ≤ dep_A`. In transit:
+`p = (t - dep_A)/(arr_B - dep_A)`, `s = 3p² - 2p³`,
+`arc = arc_A + (arc_B - arc_A)·s`, position/tangent from binary-searching
+`track_arc_m` and lerping the two polyline points. Yaw from the segment
+tangent, flipped to the direction of travel (`arc_B < arc_A` ⇒ +π).
+A run is inactive before its first arrival and after its last arrival — a
+finished run must emit nothing (**no overshoot past termini** — MVP 3 DoD).
+
+Required unit tests (sim-core): smoothstep endpoints/midpoint; dwell vs
+transit classification at boundary times; no-overshoot after final arrival;
+yaw flips for a direction_id=1 run; arc binary search on a synthetic 3-point
+track; frequency-expansion counts on a synthetic feed; service-day resolution
+incl. weekday/weekend masks, removed holiday date, and post-midnight spillover.
+
+## 4. Wasm bindings (`rust-engine/wasm`, crate name `metro-sim-wasm`)
+
+```rust
+#[wasm_bindgen]
+pub struct Engine { world: SimWorld, buf: Vec<f32> /* MAX_VEHICLES*8 */ }
+
+#[wasm_bindgen]
+impl Engine {
+    #[wasm_bindgen(constructor)]
+    pub fn new(cache_bytes: &[u8]) -> Result<Engine, JsError>;
+    pub fn validation_json(&self) -> String; // ValidationSummary as JSON
+    /// Evaluates into the internal buffer and copies into `out`
+    /// (a JS-owned Float32Array view). Returns vehicle count.
+    pub fn evaluate(&mut self, date_yyyymmdd: u32, sec_of_day: f64, out: &mut [f32]) -> usize;
+}
+```
+
+Build: `wasm-pack build rust-engine/wasm --release --target web --out-dir ../../src/sim/pkg`
+(`src/sim/pkg/` is gitignored except a `.gitkeep`? No — COMMIT the built pkg so
+`npm run dev` works without a Rust toolchain; document regeneration).
+
+## 5. Worker protocol (`src/sim/worker.ts` + `src/sim/protocol.ts`)
+
+Plain `postMessage` with **transferable ArrayBuffers**, ping-pong buffer pool
+(≥ 3 buffers of `MAX_VEHICLES*8*4` bytes). No SharedArrayBuffer anywhere.
+
+Main → worker:
+
+```ts
+{ kind: "init", wasmUrl: string, cache: ArrayBuffer }        // cache transferred
+{ kind: "clock", epochMs: number, warp: number }             // set/replace clock
+{ kind: "returnBuffer", buffer: ArrayBuffer }                // recycle (transferred)
+{ kind: "stop" }
+```
+
+Worker → main:
+
+```ts
+{ kind: "ready", validation: ValidationSummary }
+{ kind: "error", message: string }
+{ kind: "frame", simEpochMs: number, count: number, buffer: ArrayBuffer } // transferred
+```
+
+- Worker loop: `setInterval` at **10 Hz real time**. Each tick computes
+  `simEpochMs = clockEpochMs + (performance.now() - clockSetAt) * warp`,
+  converts to Bangkok local date + sec-of-day (fixed UTC+7, no DST:
+  `local = simEpochMs + 7*3600_000`), calls `engine.evaluate`, posts a frame.
+- Warp changes rebase the clock so sim time is continuous.
+- If the buffer pool is empty (main thread hasn't returned buffers), skip the
+  tick — never allocate unboundedly, never block.
+
+Renderer-side interpolation (§3A.7): keep the two most recent frames; at
+render time `alpha = (renderSimTime - frameA.simEpochMs) / (frameB.simEpochMs
+- frameA.simEpochMs)`; match vehicles across frames by `run_idx` (lane 5);
+lerp x/y/z, slerp-lite yaw (shortest angular distance); a vehicle present in
+only one frame renders at that frame's pose. Render sim clock =
+`clockEpochMs + (now - clockSetAt) * warp` computed main-thread-side from the
+same clock params (store them in Zustand when set).
+
+## 6. Frontend (MVP 3)
+
+- `src/map/VehicleManager.ts`: owns one `THREE.InstancedMesh` per route
+  (capacity MAX_VEHICLES), stylized low-poly train (elongated rounded box,
+  ~65 m × 3.2 m × 3.8 m — 4-car consist; F3.1's GLTF models come later),
+  colored to `RouteDoc.color_rgb`, plus emissive-ish white cab tip at the
+  front so direction of travel is visible. Matrix per vehicle from
+  interpolated x/y/z/yaw. `count` set per frame; `instanceMatrix.needsUpdate`.
+- Wire into the existing `GreenLineLayer` scene; call
+  `map.triggerRepaint()` continuously while the engine is running (MapLibre
+  only repaints on demand).
+- `src/stores/useAppStore.ts` additions (UI state ONLY — no per-frame data):
+  `engineStatus: "off" | "loading" | "ready" | "error"`,
+  `validation: ValidationSummary | null`, `warp: 1|5|10|60`,
+  `clockEpochMs/clockSetAt` (rebased on warp change), `vehicleCount`
+  (throttled to 1 Hz updates).
+- `src/components/TimeControls.tsx`: overlay card — current sim clock
+  (Asia/Bangkok, HH:mm:ss), warp buttons 1×/5×/10×/60×, "now" reset button,
+  vehicle count, and a small validation line (stations/patterns/runs) once
+  ready — this line is the visible MVP 2 DoD artifact.
+- Per-frame kinematics NEVER touch React/Zustand (§3A.7).
+
+## 7. Definition of done
+
+- MVP 2: `green-line.tmb` generated (< 3 MB compressed — expected ≪ 1 MB),
+  fetched + parsed client-side, validation summary (station/pattern/run/
+  service counts + feed_version) matches the preprocessor report and is
+  visible in the UI; `cargo test` green.
+- MVP 3: trains visibly dwell + move along both branches at the correct
+  scheduled positions for the current Bangkok time; headings follow track
+  tangent (opposite directions on the two tracks); no vehicles before first
+  service (~06:00) or long after last runs; warp 1×/5×/10×/60× works; 60 FPS
+  target: instanced meshes, no per-frame React state.

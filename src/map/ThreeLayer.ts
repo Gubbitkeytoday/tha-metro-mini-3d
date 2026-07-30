@@ -4,6 +4,7 @@ import type { GreenLineData } from "../types";
 import type { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { MERC_PER_METER, ORIGIN_MERC } from "./coordinates";
 import { buildStationMarkers, buildTrackDeck, buildTrackLine } from "./trackGeometry";
+import type { VehicleManager } from "./VehicleManager";
 
 /**
  * Custom MapLibre layer hosting the Three.js scene (SRS §3A.4).
@@ -28,7 +29,17 @@ export class GreenLineLayer implements CustomLayerInterface {
   private projection = new THREE.Matrix4();
   private lineMaterials: LineMaterial[] = [];
 
-  constructor(private data: GreenLineData) {}
+  /**
+   * Per-frame hook, invoked at the start of every render() before drawing —
+   * MapContainer uses it to push interpolated vehicle poses into the
+   * VehicleManager without touching React/Zustand (SRS §3A.7).
+   */
+  beforeRender: (() => void) | null = null;
+
+  constructor(
+    private data: GreenLineData,
+    private vehicles?: VehicleManager,
+  ) {}
 
   onAdd(map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext): void {
     this.renderer = new THREE.WebGLRenderer({
@@ -52,11 +63,13 @@ export class GreenLineLayer implements CustomLayerInterface {
       this.lineMaterials.push(material);
     }
     scene.add(buildStationMarkers(branches));
+    if (this.vehicles) scene.add(...this.vehicles.meshes);
     this.scene = scene;
   }
 
   render(_gl: WebGLRenderingContext | WebGL2RenderingContext, matrix: ArrayLike<number>): void {
     if (!this.renderer || !this.scene) return;
+    this.beforeRender?.();
     this.projection.fromArray(matrix as number[]).multiply(this.originMatrix);
     this.camera.projectionMatrix = this.projection;
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
