@@ -315,13 +315,18 @@ Worker → main:
 ```ts
 { kind: "ready", validation: ValidationSummary }
 { kind: "error", message: string }
-{ kind: "frame", simEpochMs: number, count: number, buffer: ArrayBuffer } // transferred
+{ kind: "frame", simEpochMs: number, count: number, evalMs: number, buffer: ArrayBuffer } // transferred
 ```
 
 - Worker loop: `setInterval` at **10 Hz real time**. Each tick computes
   `simEpochMs = clockEpochMs + (performance.now() - clockSetAt) * warp`,
   converts to Bangkok local date + sec-of-day (fixed UTC+7, no DST:
-  `local = simEpochMs + 7*3600_000`), calls `engine.evaluate`, posts a frame.
+  `local = simEpochMs + 7*3600_000`), calls `engine.evaluate` timed with
+  `performance.now()` (`evalMs`, NF1 harness — `tools/verify-perf.mjs`), posts
+  a frame. `SimClient` keeps a 600-sample rolling window of `evalMs`/`count`
+  (`getEvalStats(): { samples, meanMs, p95Ms, maxCount }`) for that harness;
+  it is not on the render path (§3A.2) — one extra number on an existing
+  message, no new boundary crossing.
 - Warp changes rebase the clock so sim time is continuous.
 - If the buffer pool is empty (main thread hasn't returned buffers), skip the
   tick — never allocate unboundedly, never block.

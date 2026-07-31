@@ -67,8 +67,10 @@ function tick(): void {
   const simEpochMs = clockEpochMs + (performance.now() - clockSetAt) * warp;
   const { dateYyyymmdd, secOfDay } = bangkokFields(simEpochMs);
 
+  const t0 = performance.now();
   const count = engine.evaluate(dateYyyymmdd, secOfDay, new Float32Array(buffer));
-  post({ kind: "frame", simEpochMs, count, buffer }, [buffer]);
+  const evalMs = performance.now() - t0;
+  post({ kind: "frame", simEpochMs, count, evalMs, buffer }, [buffer]);
 }
 
 /** UI-rate schedule lookups (contract §7) — never called on the frame path. */

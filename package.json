@@ -20,6 +20,7 @@
     "verify:mvp4": "node tools/verify-mvp4.mjs",
     "verify:kinematics": "node tools/verify-kinematics.mjs",
     "verify:closeup": "node tools/verify-closeup.mjs",
+    "verify:perf": "node tools/verify-perf.mjs",
     "screenshot": "node tools/screenshot.mjs"
   },
   "dependencies": {

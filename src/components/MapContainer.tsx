@@ -187,8 +187,15 @@ export function MapContainer() {
       }
     });
 
-    if (import.meta.env.DEV) {
-      // dev-only handles for tools/screenshot.mjs and tools/verify-*.mjs
+    // Dev builds always expose these; a production build (tools/verify-perf.mjs
+    // runs against `npm run preview`, i.e. a real prod bundle — dev-mode React
+    // and unminified Three would make the NF1 numbers meaningless) exposes them
+    // too, but only when opted in via `?debug=1`, so ordinary production
+    // visitors never get debug globals on `window`.
+    const debugRequested =
+      typeof window !== "undefined" && new URLSearchParams(window.location.search).get("debug") === "1";
+    if (import.meta.env.DEV || debugRequested) {
+      // dev/debug-only handles for tools/screenshot.mjs and tools/verify-*.mjs
       const dev = window as unknown as {
         __map?: MapLibreMap;
         __sim?: typeof activeSimClient;
