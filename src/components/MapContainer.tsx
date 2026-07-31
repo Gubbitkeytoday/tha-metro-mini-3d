@@ -71,6 +71,20 @@ export function MapContainer() {
       map.addLayer(layer);
       setMapReady(true);
       store.setRoutes(net.lines);
+      // Seed the layer/vehicle-manager visibility from whatever hiddenRoutes
+      // already holds at mount time — on a cold load this is always [], but
+      // the subscription below only reacts to *changes*, so without this a
+      // remount with pre-existing hidden routes (future persistence, or a
+      // React StrictMode double-invoke in dev) would render every line
+      // visible until the next toggle.
+      {
+        const initialHidden = useAppStore.getState().hiddenRoutes;
+        for (let i = 0; i < net.lines.length; i++) {
+          const visible = !initialHidden.includes(i);
+          layer.setLineVisible(i, visible);
+          vehicleManager.setRouteVisible(i, visible);
+        }
+      }
       // Visibility is UI state, so it drives the scene through a subscription
       // rather than the per-frame path.
       unsubscribeVisibility = useAppStore.subscribe((state, prev) => {

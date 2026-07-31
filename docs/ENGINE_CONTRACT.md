@@ -88,7 +88,7 @@ pub struct RouteDoc {
     pub simulated: bool,         // false = track geometry only: no patterns, no runs,
                                   // no trains (e.g. a pre-revenue line with no gtfsRouteId)
     pub name_en: String,
-    pub color_rgb: u32,          // 0x65B724 / 0x246B5B
+    pub color_rgb: u32,          // always parse_hex_color(line.color) from the registry, e.g. 0x7CB342 (Sukhumvit)
     /// Track polyline in LOCAL ENU METERS relative to (origin_lng, origin_lat),
     /// Catmull-Rom resampled at ~10 m spacing by the preprocessor.
     /// x=east, y=north, z=up(+15.0). Same frame as src/map/coordinates.ts.
@@ -285,7 +285,7 @@ implemented against it.
   171–172 concurrent vehicles** (weekday 07:52, per `network.report.json`'s
   `peak_concurrent`/`peak_concurrent_weekday`) — comfortably under 1024, but
   under the SRS NF1 300-concurrent target too. `npm run verify:perf` leaves
-  that assertion failing on purpose (see ENGINE_CONTRACT §8 / CLAUDE.md)
+  that one sub-check (of 5) failing on purpose (see ENGINE_CONTRACT §8 / CLAUDE.md)
   rather than weakening it or fabricating load to pass it; it is real GTFS
   schedule density for these lines, not a defect in the engine, buffer sizing,
   or the scan itself. 1440 extra
@@ -521,9 +521,16 @@ vehicle type, the legend/line-selector list — comes straight from the
 frontend's own `src/data/network.json` import (`MapContainer.tsx`:
 `store.setRoutes(net.lines)`), never from a wasm round-trip; `RouteDoc`'s
 `name_en`/`color_rgb` inside the cache exist for the engine's own use
-(`RunDetail.route_name`/`color_rgb` above) and happen to usually agree with
-the registry's values, but the UI never depends on that agreement for
-anything it renders at rest.
+(`RunDetail.route_name`/`color_rgb` above) and **are guaranteed to agree
+with the registry's values by construction**, not by coincidence: `main.rs`
+sets `color_rgb = parse_hex_color(&line.color)?` and `name_en =
+line.name.clone()` for every simulated route, straight from
+`tools/lines.config.mjs` via `network.json` — never from the GTFS feed
+(whose `routes.txt` gives both SRT Red routes the same ambiguous
+`short_name` "Red", which is exactly why the registry's name is used
+instead). The UI still never depends on this agreement for anything it
+renders at rest — it reads `network.json` directly — but the cache's copy
+is not a separate, potentially-drifting source of truth either.
 
 Worker protocol additions (§5), a request/response pair keyed by `id`:
 
@@ -585,13 +592,16 @@ together.
   clickability; an interchange station shows a transfer chip; a monorail's
   *rendered* geometry — not just its config table — is shorter than a
   heavy-rail train's) — and `npm run verify:mvp4` still passes unchanged (14
-  checks), i.e. single-line interaction did not regress. **NF1 is 3/4, not
-  4/4, by design, not by oversight:** `npm run verify:perf` against the
-  production build measures sim tick p95 ≈ 0.2–0.3 ms (< 3 ms target, pass),
-  no frame truncated (peak 171–172 vs `MAX_VEHICLES` 1024, pass), ~100 FPS
-  (≥ 55 target, pass) — but the ≥300-concurrent-vehicles assertion fails,
-  because the real 9-line network's measured peak (§2's peak-concurrent scan)
-  is 171–172 vehicles, not a bug anywhere in this contract's implementation.
+  checks), i.e. single-line interaction did not regress. **NF1 is 4/5, not
+  5/5, by design, not by oversight:** `npm run verify:perf` against the
+  production build measures the sim actually ticking a meaningful sample
+  count during the window (pass — rules out a silently-dead worker producing
+  the same "one check fails" tally), sim tick p95 ≈ 0.2–0.3 ms (< 3 ms
+  target, pass), no frame truncated (peak 171–172 vs `MAX_VEHICLES` 1024,
+  pass), ~100 FPS (≥ 55 target, pass) — but the ≥300-concurrent-vehicles
+  assertion fails, because the real 9-line network's measured peak (§2's
+  peak-concurrent scan) is 171–172 vehicles, not a bug anywhere in this
+  contract's implementation.
   The assertion is left as a hard, currently-failing gate rather than
   weakened or gamed with synthetic load — see CLAUDE.md's "MVP 5's one
   disclosed gap."

@@ -80,7 +80,7 @@ export class VehicleManager {
   update(vehicles: Float32Array, count: number, selectedRunIdx: number | null = null): void {
     // Instance order changes every frame, so tints must be rewritten whenever
     // anything IS selected. With no selection they are all plain and the
-    // 512×3 attribute upload can be skipped entirely.
+    // 1024×3 attribute upload can be skipped entirely.
     const selectionChanged = selectedRunIdx !== this.tintedFor;
     const writeTints = selectedRunIdx !== null || selectionChanged;
     this.tintedFor = selectedRunIdx;

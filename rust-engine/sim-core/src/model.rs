@@ -31,7 +31,7 @@ pub struct RouteDoc {
     /// false = track geometry only (no patterns, no runs, no trains).
     pub simulated: bool,
     pub name_en: String,
-    pub color_rgb: u32, // 0x65B724 / 0x246B5B
+    pub color_rgb: u32, // always parse_hex_color(line.color) from the registry, e.g. 0x7CB342 (Sukhumvit)
     /// Track polyline in LOCAL ENU METERS relative to (origin_lng, origin_lat),
     /// Catmull-Rom resampled at ~10 m spacing by the preprocessor.
     /// x=east, y=north, z=up(+15.0). Same frame as src/map/coordinates.ts.

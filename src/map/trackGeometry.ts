@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry as ThreeLineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
-import type { LineGeometry } from "../types";
+import type { LineGeometry, Structure } from "../types";
 import { lngLatAltToLocal } from "./coordinates";
 
 /**
@@ -19,7 +19,7 @@ import { lngLatAltToLocal } from "./coordinates";
  * sink through the ground plane); `monorail` is the narrow straddle beam used
  * by the Pink/Yellow/Gold guideways.
  */
-export const DECK_PROFILE: Record<string, { widthM: number; depthM: number }> = {
+export const DECK_PROFILE: Record<Structure | "monorail", { widthM: number; depthM: number }> = {
   elevated: { widthM: 9, depthM: 2 },
   atGrade: { widthM: 8, depthM: 0.5 },
   underground: { widthM: 9, depthM: 2 },
@@ -132,8 +132,10 @@ export function buildTrackLine(line: LineGeometry): { line: Line2; material: Lin
 
 /**
  * Station markers as two InstancedMeshes (discs at deck level + support
- * poles to the ground) across all provided lines — a handful of draw
- * calls total (SRS §3A.5 instancing pattern).
+ * poles to the ground) per line — `ThreeLayer.ts` calls this once per
+ * registered line, so at today's 9-line network that's ~18 draw calls
+ * total, not a handful (SRS §3A.5 instancing pattern; still O(lines), not
+ * O(stations)).
  */
 export function buildStationMarkers(lines: LineGeometry[]): THREE.Object3D {
   const group = new THREE.Group();

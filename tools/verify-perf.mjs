@@ -61,6 +61,11 @@ await new Promise((r) => setTimeout(r, 20_000)); // ~200 ticks
 
 const stats = await page.evaluate(() => window.__sim.current.getEvalStats());
 check(
+  "the sim actually ticked during the window",
+  stats.samples >= 100,
+  `${stats.samples} ticks`,
+);
+check(
   "sim tick under 3 ms at the daily peak (NF1)",
   stats.p95Ms < 3,
   `p95 ${stats.p95Ms.toFixed(2)} ms over ${stats.samples} ticks, mean ${stats.meanMs.toFixed(2)} ms`,
