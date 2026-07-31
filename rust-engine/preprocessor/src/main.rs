@@ -375,23 +375,38 @@ fn run() -> Result<(), String> {
         });
     }
 
-    // ---- Runs (frequency expansion) ---------------------------------------
-    let service_of_trip: HashMap<&str, &str> = trips
-        .iter()
-        .map(|t| (t.trip_id.as_str(), t.service_id.as_str()))
-        .collect();
+    // ---- Runs (frequency expansion, or one run per scheduled trip) --------
     let mut runs = Vec::new();
-    for f in &frequencies {
-        let pattern_idx = pattern_idx_by_trip[&f.trip_id];
-        let service_idx = service_idx_by_id[service_of_trip[f.trip_id.as_str()]];
-        for start_sec in expand_frequency(f.start_sec, f.end_sec, f.headway_secs) {
-            runs.push(RunDoc { pattern_idx, service_idx, start_sec });
-        }
+    for trip in &trips {
+        let pattern_idx = pattern_idx_by_trip[&trip.trip_id];
+        let service_idx = service_idx_by_id[&trip.service_id];
+        let first_arrival_s = stop_times[&trip.trip_id].first().map(|r| r.arrival_s).unwrap_or(0);
+        runs.extend(runs_for_pattern(
+            &trip.trip_id,
+            &frequencies,
+            first_arrival_s,
+            pattern_idx,
+            service_idx,
+        ));
     }
     if runs.is_empty() {
-        return Err("frequency expansion produced zero runs".into());
+        return Err("expansion produced zero runs".into());
     }
     runs.sort_by_key(|r| (r.service_idx, r.start_sec, r.pattern_idx));
+
+    for (idx, route) in routes.iter().enumerate() {
+        if !route.simulated {
+            continue;
+        }
+        let has_runs = runs.iter().any(|r| patterns[r.pattern_idx as usize].route_idx as usize == idx);
+        if !has_runs {
+            return Err(format!(
+                "route '{}' ({}) is marked simulated but expanded to zero runs — \
+                 check frequencies.txt/stop_times for route_id '{}'",
+                route.line_key, route.name_en, route.gtfs_route_id
+            ));
+        }
+    }
 
     // ---- Encode + write ----------------------------------------------------
     let doc = CacheDoc {
@@ -481,6 +496,34 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// Runs for one pattern, from `frequencies.txt` when the trip has rows there,
+/// otherwise from the trip's own absolute `stop_times`.
+///
+/// GTFS allows both shapes in one feed and the Namtang feed uses both: BTS
+/// routes are frequency-based (relative stop_times + headway windows) while
+/// other operators publish concrete departures. A trip with neither must never
+/// silently vanish — the caller errors on an empty total.
+fn runs_for_pattern(
+    trip_id: &str,
+    freqs: &[gtfs::FrequencyRow],
+    first_arrival_s: u32,
+    pattern_idx: u16,
+    service_idx: u8,
+) -> Vec<RunDoc> {
+    let mut runs = Vec::new();
+    let mut had_freq = false;
+    for f in freqs.iter().filter(|f| f.trip_id == trip_id) {
+        had_freq = true;
+        for start_sec in expand_frequency(f.start_sec, f.end_sec, f.headway_secs) {
+            runs.push(RunDoc { pattern_idx, service_idx, start_sec });
+        }
+    }
+    if !had_freq {
+        runs.push(RunDoc { pattern_idx, service_idx, start_sec: first_arrival_s });
+    }
+    runs
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,5 +558,42 @@ mod tests {
     fn rejects_a_network_file_with_no_lines() {
         let file: TrackFile = serde_json::from_str(r#"{"lines":[]}"#).unwrap();
         assert!(file.lines.is_empty(), "empty networks must be caught by run(), not silently encoded");
+    }
+
+    #[test]
+    fn frequency_trips_expand_by_headway() {
+        let freqs = vec![gtfs::FrequencyRow {
+            trip_id: "t1".into(),
+            start_sec: 21_600, // 06:00
+            end_sec: 21_600 + 900,
+            headway_secs: 300,
+        }];
+        let runs = runs_for_pattern("t1", &freqs, 25_000, 0, 0);
+        assert_eq!(runs.len(), 3, "06:00, 06:05, 06:10 — end_time is exclusive");
+        assert_eq!(runs[0].start_sec, 21_600);
+        assert_eq!(runs[2].start_sec, 22_200);
+    }
+
+    #[test]
+    fn scheduled_trips_become_one_run_at_their_first_arrival() {
+        // No frequencies row: the trip's own stop_times ARE the schedule.
+        let runs = runs_for_pattern("t2", &[], 25_200, 7, 1);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].start_sec, 25_200, "07:00 departure keeps its absolute time");
+        assert_eq!(runs[0].pattern_idx, 7);
+        assert_eq!(runs[0].service_idx, 1);
+    }
+
+    #[test]
+    fn a_frequency_trip_ignores_its_own_first_arrival() {
+        let freqs = vec![gtfs::FrequencyRow {
+            trip_id: "t3".into(),
+            start_sec: 36_000,
+            end_sec: 36_600,
+            headway_secs: 600,
+        }];
+        let runs = runs_for_pattern("t3", &freqs, 99_999, 0, 0);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].start_sec, 36_000);
     }
 }
