@@ -141,8 +141,8 @@ export function MapContainer() {
     // Click to select a train or station. Uses the most recent interpolated
     // buffer — the same poses that are on screen.
     const onMapClick = (e: { point: { x: number; y: number } }) => {
-      const { stations, selectRun, selectStation } = useAppStore.getState();
-      const hit = pickAt(map, lastVehicles, lastCount, stations, e.point);
+      const { stations, selectRun, selectStation, hiddenRoutes } = useAppStore.getState();
+      const hit = pickAt(map, lastVehicles, lastCount, stations, e.point, hiddenRoutes);
       if (!hit) {
         // Clicking empty map clears the selection, like clicking away from
         // anything else.

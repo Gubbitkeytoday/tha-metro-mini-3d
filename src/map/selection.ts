@@ -1,5 +1,5 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { LANE_RUN_IDX, LANE_X, LANE_Y, VEHICLE_STRIDE, type StationInfo } from "../sim/protocol";
+import { LANE_ROUTE_IDX, LANE_RUN_IDX, LANE_X, LANE_Y, VEHICLE_STRIDE, type StationInfo } from "../sim/protocol";
 import { localToLngLat } from "./coordinates";
 
 /**
@@ -58,6 +58,9 @@ function screenDistanceSq(map: MapLibreMap, x: number, y: number, at: Point): nu
  *
  * @param vehicles interpolated stride-8 records (SimClient.getInterpolated)
  * @param at click position in canvas pixels
+ * @param hiddenRoutes route indices switched off in the line selector — their
+ *   trains and stations must not be clickable, or a user picks something that
+ *   is not on screen.
  */
 export function pickAt(
   map: MapLibreMap,
@@ -65,10 +68,12 @@ export function pickAt(
   count: number,
   stations: StationInfo[],
   at: Point,
+  hiddenRoutes: number[] = [],
 ): Picked | null {
   let bestVehicle: { runIdx: number; d2: number } | null = null;
   for (let i = 0; i < count; i++) {
     const o = i * VEHICLE_STRIDE;
+    if (hiddenRoutes.includes(vehicles[o + LANE_ROUTE_IDX] | 0)) continue;
     const d2 = screenDistanceSq(map, vehicles[o + LANE_X], vehicles[o + LANE_Y], at);
     if (d2 <= VEHICLE_PICK_PX * VEHICLE_PICK_PX && (!bestVehicle || d2 < bestVehicle.d2)) {
       bestVehicle = { runIdx: vehicles[o + LANE_RUN_IDX], d2 };
@@ -78,6 +83,7 @@ export function pickAt(
 
   let bestStation: { station: StationInfo; d2: number } | null = null;
   for (const s of stations) {
+    if (hiddenRoutes.includes(s.route_idx)) continue;
     const d2 = screenDistanceSq(map, s.x, s.y, at);
     if (d2 <= STATION_PICK_PX * STATION_PICK_PX && (!bestStation || d2 < bestStation.d2)) {
       bestStation = { station: s, d2 };

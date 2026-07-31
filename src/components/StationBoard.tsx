@@ -20,6 +20,8 @@ export function StationBoard() {
   const selectedStation = useAppStore((s) => s.selectedStation);
   const selectStation = useAppStore((s) => s.selectStation);
   const selectRun = useAppStore((s) => s.selectRun);
+  const routes = useAppStore((s) => s.routes);
+  const stations = useAppStore((s) => s.stations);
   const [board, setBoard] = useState<StationBoardData | null>(null);
 
   const routeIdx = selectedStation?.routeIdx;
@@ -56,6 +58,10 @@ export function StationBoard() {
 
   if (!selectedStation) return null;
 
+  const info = stations.find(
+    (s) => s.route_idx === selectedStation.routeIdx && s.station_idx === selectedStation.stationIdx,
+  );
+
   return (
     <div className="pointer-events-auto absolute right-4 top-4 flex max-h-[calc(100dvh-2rem)] w-72 flex-col overflow-hidden rounded-xl bg-white/90 shadow-lg backdrop-blur">
       <div className="flex items-start gap-2 border-b border-slate-200 px-4 py-3">
@@ -74,6 +80,21 @@ export function StationBoard() {
           ×
         </button>
       </div>
+
+      {info && info.interchanges.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 px-4 pb-2">
+          <span className="text-[10px] uppercase tracking-wide text-slate-400">Interchange</span>
+          {info.interchanges.map((ix) => (
+            <span
+              key={`${ix.route_idx}-${ix.station_idx}`}
+              className="rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white"
+              style={{ background: routes[ix.route_idx]?.color ?? "#64748b" }}
+            >
+              {routes[ix.route_idx]?.name ?? `Route ${ix.route_idx}`}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         <p className="px-2 pb-1 text-[10px] uppercase tracking-wide text-slate-400">

@@ -21,6 +21,8 @@ export function TrainInspector() {
   const following = useAppStore((s) => s.following);
   const selectRun = useAppStore((s) => s.selectRun);
   const setFollowing = useAppStore((s) => s.setFollowing);
+  const routes = useAppStore((s) => s.routes);
+  const stations = useAppStore((s) => s.stations);
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [ended, setEnded] = useState(false);
 
@@ -143,6 +145,9 @@ export function TrainInspector() {
                 const passed =
                   !isCurrent &&
                   (detail.next_stop_ordinal === null || i < detail.next_stop_ordinal);
+                const stationInfo = stations.find(
+                  (s) => s.route_idx === detail.route_idx && s.station_idx === stop.station_idx,
+                );
                 return (
                   <li
                     key={`${stop.station_idx}-${i}`}
@@ -156,9 +161,22 @@ export function TrainInspector() {
                             : "text-slate-700"
                     }`}
                   >
-                    <span className="truncate">
+                    <span className="min-w-0 flex-1 truncate">
                       {stop.code ? `${stop.code} · ` : ""}
                       {stop.name_en}
+                      {stationInfo && stationInfo.interchanges.length > 0 && (
+                        <span className="ml-1 inline-flex flex-wrap items-center gap-1">
+                          {stationInfo.interchanges.map((ix) => (
+                            <span
+                              key={`${ix.route_idx}-${ix.station_idx}`}
+                              className="rounded-full px-1 py-0 text-[9px] font-medium text-white"
+                              style={{ background: routes[ix.route_idx]?.color ?? "#64748b" }}
+                            >
+                              {routes[ix.route_idx]?.name ?? `Route ${ix.route_idx}`}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                     </span>
                     <span className="font-mono tabular-nums">
                       {formatServiceSec(stop.arrival_sec)}
