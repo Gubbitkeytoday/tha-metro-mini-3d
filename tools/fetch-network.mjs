@@ -29,23 +29,43 @@ const MIRRORS = [
   "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ];
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function overpass(query) {
   let lastError;
-  for (const url of MIRRORS) {
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        body: new URLSearchParams({ data: query }),
-        headers: { "User-Agent": "tha-metro-mini-3d/0.1 (data preprocessing)" },
-      });
-      const text = await res.text();
-      if (!res.ok || text.trimStart().startsWith("<")) {
-        throw new Error(`${url}: HTTP ${res.status}: ${text.slice(0, 200)}`);
+  // Two full passes over the mirror list: transient 429/504 overload on every
+  // mirror at once (observed in practice — all four mirrors are apparently
+  // sharing load today) usually clears within a minute, so a bare single
+  // pass gives up too early. A short backoff between passes, not between
+  // individual mirrors, keeps the common case (first mirror healthy) fast.
+  for (let pass = 0; pass < 2; pass++) {
+    if (pass > 0) {
+      console.warn(`  all mirrors failed once, waiting 30s before retrying...`);
+      await sleep(30_000);
+    }
+    for (const url of MIRRORS) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          body: new URLSearchParams({ data: query }),
+          headers: { "User-Agent": "tha-metro-mini-3d/0.1 (data preprocessing)" },
+          // The query itself carries a server-side [timeout:60], but that
+          // only bounds Overpass's own execution — a mirror that accepts the
+          // TCP connection and then never sends a response (rather than an
+          // HTTP error) can otherwise hang the client forever. Bound it
+          // client-side too so a stalled mirror fails over instead of
+          // wedging the whole run.
+          signal: AbortSignal.timeout(75_000),
+        });
+        const text = await res.text();
+        if (!res.ok || text.trimStart().startsWith("<")) {
+          throw new Error(`${url}: HTTP ${res.status}: ${text.slice(0, 200)}`);
+        }
+        return JSON.parse(text);
+      } catch (err) {
+        lastError = err;
+        console.warn(`Overpass mirror failed, trying next: ${err.message}`);
       }
-      return JSON.parse(text);
-    } catch (err) {
-      lastError = err;
-      console.warn(`Overpass mirror failed, trying next: ${err.message}`);
     }
   }
   throw lastError;
@@ -103,7 +123,11 @@ async function fetchBranch(relationId, branchKey, altitudeM) {
 
   const stations = rel.members
     .filter((m) => m.type === "node" && /^stop/.test(m.role) && m.lat != null)
-    .map((m) => ({ id: m.ref, lon: m.lon, lat: m.lat }));
+    // Stringify: Overpass returns node refs as JSON numbers, but the Rust
+    // preprocessor's NetworkStation.id is a String (it's compared against
+    // GTFS stop_id strings for the code/name lookup) — a bare number here
+    // fails deserialization with "invalid type: integer, expected a string".
+    .map((m) => ({ id: String(m.ref), lon: m.lon, lat: m.lat }));
 
   // stop_position nodes carry no tags via `out geom` members — fetch names.
   const ids = stations.map((s) => s.id).join(",");
@@ -178,6 +202,8 @@ async function main() {
       structure: line.structure,
       vehicleType: line.vehicleType,
       gtfsRouteId: line.gtfsRouteId,
+      excludeGtfsStopIds: line.excludeGtfsStopIds ?? [],
+      allowLargeSnapStopIds: line.allowLargeSnapStopIds ?? [],
       ...geom,
     });
   }

@@ -1,33 +1,65 @@
 {
-  "bytes": 123074,
+  "bytes": 390617,
   "feed_version": "20260730",
-  "gzip_bytes": 70792,
+  "gzip_bytes": 221695,
   "interchanges": [
+    {
+      "a": "sukhumvit/BTS Samrong",
+      "b": "yellow/MRT Samrong"
+    },
     {
       "a": "sukhumvit/BTS Siam",
       "b": "silom/BTS Siam"
+    },
+    {
+      "a": "sukhumvit/BTS Phaya Thai",
+      "b": "arl/ARL Phaya Thai"
+    },
+    {
+      "a": "sukhumvit/BTS Wat Phrasri Mahathat",
+      "b": "pink/MRT"
+    },
+    {
+      "a": "silom/BTS Krung Thon Buri",
+      "b": "gold/BTS Khrung Thon Buri"
+    },
+    {
+      "a": "purple/MRT Nonthaburi Civic Center",
+      "b": "pink/MRT Nonthaburi Civic Center"
+    },
+    {
+      "a": "purple/MRT Bang Son",
+      "b": "red-light/SRT Bang Son [Light Red Line]"
+    },
+    {
+      "a": "pink/MRT Kak Si",
+      "b": "red-dark/SRT Lak Si (Dark Red Line)"
+    },
+    {
+      "a": "red-dark/SRT Krung Thep Aphiwat Central Terminal Station [Red Line]",
+      "b": "red-light/SRT Krung Thep Aphiwat Central Terminal Station [Red Line]"
     }
   ],
-  "max_snap_m": 63.92498328970017,
-  "patterns": 14,
-  "peak_concurrent": 100,
+  "max_snap_m": 554.7298250815825,
+  "patterns": 34,
+  "peak_concurrent": 172,
   "peak_concurrent_date": 20260722,
-  "peak_concurrent_time": 27960,
+  "peak_concurrent_time": 28320,
   "peak_concurrent_weekday": {
     "date": 20260722,
-    "peak": 100,
-    "time": 27960
+    "peak": 172,
+    "time": 28320
   },
   "peak_concurrent_weekend": {
     "date": 20260725,
-    "peak": 57,
-    "time": 75600
+    "peak": 121,
+    "time": 65700
   },
   "per_route": [
     {
       "gtfs_route_id": "1",
       "length_m": 51235.79296875,
-      "name_en": "Sukhumvit",
+      "name_en": "Sukhumvit Line",
       "patterns": 10,
       "runs": 1364,
       "stations": 47,
@@ -36,14 +68,77 @@
     {
       "gtfs_route_id": "2",
       "length_m": 13197.5517578125,
-      "name_en": "Silom",
+      "name_en": "Silom Line",
       "patterns": 4,
       "runs": 798,
       "stations": 14,
       "track_points": 1321
+    },
+    {
+      "gtfs_route_id": "4",
+      "length_m": 21216.046875,
+      "name_en": "MRT Purple Line",
+      "patterns": 4,
+      "runs": 552,
+      "stations": 16,
+      "track_points": 2123
+    },
+    {
+      "gtfs_route_id": "5",
+      "length_m": 28587.234375,
+      "name_en": "Airport Rail Link",
+      "patterns": 4,
+      "runs": 370,
+      "stations": 8,
+      "track_points": 2860
+    },
+    {
+      "gtfs_route_id": "2436",
+      "length_m": 33962.07421875,
+      "name_en": "MRT Pink Line",
+      "patterns": 2,
+      "runs": 276,
+      "stations": 30,
+      "track_points": 3397
+    },
+    {
+      "gtfs_route_id": "2224",
+      "length_m": 28712.83984375,
+      "name_en": "MRT Yellow Line",
+      "patterns": 2,
+      "runs": 276,
+      "stations": 23,
+      "track_points": 2872
+    },
+    {
+      "gtfs_route_id": "2025",
+      "length_m": 1699.4600830078125,
+      "name_en": "BTS Gold Line",
+      "patterns": 4,
+      "runs": 586,
+      "stations": 3,
+      "track_points": 171
+    },
+    {
+      "gtfs_route_id": "2026",
+      "length_m": 23378.66796875,
+      "name_en": "SRT Dark Red Line",
+      "patterns": 2,
+      "runs": 169,
+      "stations": 10,
+      "track_points": 2339
+    },
+    {
+      "gtfs_route_id": "2027",
+      "length_m": 15089.4755859375,
+      "name_en": "SRT Light Red Line",
+      "patterns": 2,
+      "runs": 90,
+      "stations": 4,
+      "track_points": 1510
     }
   ],
-  "runs": 2162,
-  "services": 2,
-  "stations": 61
+  "runs": 4481,
+  "services": 3,
+  "stations": 155
 }

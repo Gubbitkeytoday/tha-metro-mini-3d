@@ -2,7 +2,7 @@
 
 > Interactive, web-based 3D visualization of Bangkok's rail transit network — trains moving on schedule along authentic geography, elevations, and timetables.
 
-**Status:** 🚧 Early development — **MVP 1–4 delivered**: BTS Green Line 3D track, GTFS→binary data pipeline, scheduled trains moving with time-warp, and click-to-inspect with a follow camera and time scrubber; see the [roadmap](#roadmap). **Repo:** [`tha-metro-mini-3d`](https://github.com/naiiytom/tha-metro-mini-3d)
+**Status:** 🚧 Early development — **MVP 1–5 delivered**: BTS Green Line 3D track, GTFS→binary data pipeline, scheduled trains moving with time-warp, click-to-inspect with a follow camera and time scrubber, and multi-line breadth (MRT Purple, Airport Rail Link, MRT Pink, MRT Yellow, BTS Gold, SRT Dark/Light Red — 9 lines simulated, 155 stations, 4,481 runs); see the [roadmap](#roadmap). **Repo:** [`tha-metro-mini-3d`](https://github.com/naiiytom/tha-metro-mini-3d)
 
 ---
 
@@ -34,21 +34,22 @@ Orbiting moves both axes in one motion, so a diagonal drag tilts and turns toget
 
 ## Coverage
 
-Operational lines receive full simulation (track + trains); pre-revenue lines are rendered as track only.
+Operational lines receive full simulation (track + trains); pre-revenue lines are rendered as track only. **As of MVP 5 (2026-07-31), nine lines are simulated**: BTS Sukhumvit & Silom, MRT Purple, Airport Rail Link, MRT Pink, MRT Yellow, BTS Gold, and SRT Dark/Light Red — 155 stations, 34 trip patterns, 4,481 expanded runs, ~213 KB gzip. MRT Blue and Orange remain MVP 6.
 
 | Line | Type | Operator | Structure | v1.0 |
 |------|------|----------|-----------|------|
 | BTS Sukhumvit & Silom (Green) | Heavy Rail | BTSC | Elevated | Full |
-| MRT Blue | Heavy Rail | BEM | Underground / Elevated | Full |
 | MRT Purple | Heavy Rail | BEM | Elevated | Full |
-| SRT Red (North & West) | Commuter Rail | SRTET | At-Grade / Elevated | Full |
 | Airport Rail Link (ARL) | Express / Commuter | Asia Era One | Elevated | Full |
 | MRT Pink | Monorail | NBM | Elevated | Full |
 | MRT Yellow | Monorail | EBM | Elevated | Full |
 | BTS Gold | APM (monorail-class) | BMA/KT (BTSC) | Elevated | Full |
+| SRT Dark Red | Commuter Rail | SRTET | Elevated | Full |
+| SRT Light Red | Commuter Rail | SRTET | Elevated | Full |
+| MRT Blue | Heavy Rail | BEM | Underground / Elevated | MVP 6 (not yet added) |
 | MRT Orange | Heavy Rail | — | Underground / Elevated | **Track only (pre-revenue)** |
 
-> ⚠️ Line status reflects **early 2025** and is unverified in this draft. Re-check the Orange Line and any new extensions (e.g. Pink Line spur to Muang Thong Thani, Purple southern extension) before relying on this table.
+> Line status re-verified 2026-07-31 (see [`docs/SRS.md` §2](./docs/SRS.md#2-system-scope--transit-coverage)): MRT Orange is still pre-revenue (Eastern Section now projected late 2027, Western Section 2030) and stays MVP 6 track-only. The Pink Line's Muang Thong Thani spur has been in full paid revenue service since 2025-06-17 but is **not yet in this registry** — the Namtang feed bundles its 4 shuttle trip patterns into the same GTFS route id as the main Pink Line, and its own OSM relation pair wasn't fetched for this task, so it's excluded from simulation for now (main Pink Line is unaffected). The Purple Line's Tao Poon–Rat Burana southern extension remains under construction, not open.
 
 ## Tech stack
 
@@ -126,7 +127,7 @@ Delivered as vertical, shippable slices — track geometry first, then motion, t
 | **2** ✅ | Green Line data pipeline — GTFS → binary cache, loaded & validated client-side. **Delivered:** Rust preprocessor expands the frequency-based Namtang feed (14 patterns → 2,162 runs, 61 stations snapped onto track) into a 123 KB bincode cache (71 KB gzip vs 3 MB budget); client validation summary shown in the UI. |
 | **3** ✅ | Green Line trains moving — Wasm interpolation engine + Web Worker. **Delivered:** 93 KB Wasm engine (dwell/transit/smoothstep/tangent-yaw) evaluated at 10 Hz in a worker, transferable-buffer ping-pong, render-side interpolation, InstancedMesh 4-car trains (2 draw calls), 1×/5×/10×/60× time-warp with Bangkok clock. |
 | **4** ✅ | Interaction & UI — follow-cam, inspector, time scrubber, timetable drawer. **Delivered:** click-to-select trains and stations (screen-space picking), third-person follow camera, train inspector with next-stop ETA and the full call list, live station board, and a scrubber over the service day; schedule lookups added to the Rust engine and crossed over a promise-based worker query channel. |
-| 5 | Multi-line breadth — Purple, ARL, Pink, Yellow, Gold, Red. |
+| **5** ✅ | Multi-line breadth — Purple, ARL, Pink, Yellow, Gold, Red. **Delivered:** the line registry (`tools/lines.config.mjs`) grew from 2 to 9 entries with pinned OSM relation ids and GTFS route ids verified against the real Namtang feed; 155 stations, 34 patterns, 4,481 runs, ~213 KB gzip cache. Surfaced and fixed real data-pipeline gaps along the way: an OSM-node-id type mismatch, the Pink Line's Muang Thong Thani spur trips sharing a GTFS route id with the main line, a GTFS/OSM coordinate mismatch at the Pink Line's own terminus, and OSM stop-position nodes without name tags silently blanking station names. |
 | 6 | Underground + polish — MRT Blue, Orange (track only), transparency mode, day/night lighting. |
 
 ## Data & licensing

@@ -53,6 +53,30 @@ struct LineGeometry {
     gtfs_route_id: Option<String>,
     track: Vec<[f64; 3]>,
     stations: Vec<NetworkStation>,
+    /// GTFS stop_ids to drop from this line's simulation entirely (and any
+    /// trip that serves one, taking its whole pattern with it) — for a stop
+    /// on a real physical branch this line's `track` polyline does not cover.
+    /// Needed for MRT Pink (route_id 2436): the Namtang feed bundles the
+    /// Muang Thong Thani spur's 4 shuttle trip patterns into the *same*
+    /// route_id as the 30-station main line, so without this the spur's two
+    /// stations (gtfs_stop_id 16936/16937) fail the snap check — they sit
+    /// ~1.2 km off the main-line-only track this registry entry fetches
+    /// (see tools/lines.config.mjs; spur geometry is out of scope for now).
+    #[serde(default)]
+    exclude_gtfs_stop_ids: Vec<String>,
+    /// GTFS stop_ids exempt from the MAX_SNAP_M hard-fail — for a stop whose
+    /// GTFS lat/lng is verified to be a *different, real* nearby station,
+    /// not bad geometry. Needed for MRT Pink stop 359 "Nonthaburi Civic
+    /// Center": the Namtang feed's coordinate for this stop is 8 m from
+    /// OSM's MRT Purple node (ref PP11) — the interchange's Purple-side
+    /// platform — while the real Pink-side platform (OSM ref PK01, which
+    /// this line's fetched track correctly ends 2.7 m from) is 555 m away.
+    /// Two distinct physical stations sharing a name/GTFS stop_id, not a
+    /// stitching bug (verified directly against OSM node tags, see
+    /// tools/lines.config.mjs). Still snapped and simulated, just without
+    /// the usual proximity guarantee — logged as a warning, not an error.
+    #[serde(default)]
+    allow_large_snap_stop_ids: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -139,7 +163,7 @@ fn run() -> Result<(), String> {
             return Err(format!("route_id '{id}' not found in routes.txt"));
         }
     }
-    let trips = gtfs::read_trips(gtfs_dir, &simulated_route_ids)?;
+    let mut trips = gtfs::read_trips(gtfs_dir, &simulated_route_ids)?;
     if trips.is_empty() {
         return Err("no trips found for the simulated routes".into());
     }
@@ -149,6 +173,49 @@ fn run() -> Result<(), String> {
     let frequencies = gtfs::read_frequencies(gtfs_dir, &trip_ids)?;
     let calendar = gtfs::read_calendar(gtfs_dir, &service_ids)?;
     let mut calendar_dates = gtfs::read_calendar_dates(gtfs_dir, &service_ids)?;
+
+    // Drop any trip (i.e. its whole pattern) that touches a line's
+    // exclude_gtfs_stop_ids — see the field's doc comment on LineGeometry.
+    // stop_times/frequencies/calendar above were loaded from the full trip
+    // set and may now carry a few unused entries; harmless, since everything
+    // downstream is driven by (the now-filtered) `trips`, not those maps.
+    let excluded_stops_by_route: HashMap<&str, HashSet<&str>> = track_file
+        .lines
+        .iter()
+        .filter_map(|l| {
+            if l.exclude_gtfs_stop_ids.is_empty() {
+                return None;
+            }
+            l.gtfs_route_id.as_deref().map(|id| {
+                (id, l.exclude_gtfs_stop_ids.iter().map(String::as_str).collect())
+            })
+        })
+        .collect();
+    if !excluded_stops_by_route.is_empty() {
+        let before = trips.len();
+        trips.retain(|t| {
+            let Some(excluded) = excluded_stops_by_route.get(t.route_id.as_str()) else {
+                return true;
+            };
+            let touches_excluded = stop_times
+                .get(&t.trip_id)
+                .is_some_and(|rows| rows.iter().any(|r| excluded.contains(r.stop_id.as_str())));
+            if touches_excluded {
+                eprintln!(
+                    "note: dropping trip {} (route {}) — serves an excluded stop",
+                    t.trip_id, t.route_id
+                );
+            }
+            !touches_excluded
+        });
+        eprintln!(
+            "note: excluded-stop filter dropped {} of {before} trips",
+            before - trips.len()
+        );
+        if trips.is_empty() {
+            return Err("exclude_gtfs_stop_ids filtering removed every trip".into());
+        }
+    }
 
     let all_stop_ids: HashSet<String> = stop_times
         .values()
@@ -205,25 +272,48 @@ fn run() -> Result<(), String> {
                     let row = &stop_rows[stop_id];
                     let p = proj.project(row.lon, row.lat, 0.0);
                     let (arc_m, snap_d) = spline::snap_to_polyline(&poly, &arcs, [p[0], p[1]]);
-                    if snap_d > MAX_SNAP_M {
+                    let large_snap_allowed = line
+                        .allow_large_snap_stop_ids
+                        .iter()
+                        .any(|s| s.as_str() == stop_id.as_str());
+                    if snap_d > MAX_SNAP_M && !large_snap_allowed {
                         return Err(format!(
                             "stop {stop_id} snaps {snap_d:.1} m from route {route_id} track (limit {MAX_SNAP_M} m)"
                         ));
                     }
-                    if snap_d > 40.0 {
+                    if large_snap_allowed {
+                        eprintln!(
+                            "warning: stop {stop_id} snaps {snap_d:.1} m from route {route_id} track — allowed (allow_large_snap_stop_ids)"
+                        );
+                    } else if snap_d > 40.0 {
                         eprintln!(
                             "warning: stop {stop_id} ({}) is {snap_d:.1} m from route {route_id} track",
                             row.name
                         );
                     }
                     max_snap_m = max_snap_m.max(snap_d);
-                    let (code, name_en, name_th) = match network_by_id.get(stop_id.as_str()) {
+                    // OSM candidates only win if they actually carry a name:
+                    // route-relation `role=stop` members are usually bare
+                    // stop_position nodes with no name tag at all (the name
+                    // lives on a separate platform/station node this fetch
+                    // never queries) — every one of the ~130 "matched by
+                    // distance" fallbacks below turned out to have g.name ==
+                    // "" before this check existed, silently blanking most
+                    // new-line station names even though the correctly-named
+                    // GTFS fallback was right there. Prefer any named
+                    // candidate; only give up and use bare GTFS naming when
+                    // nothing nearby has a name at all.
+                    let (code, name_en, name_th) = match network_by_id
+                        .get(stop_id.as_str())
+                        .filter(|g| !g.name.is_empty())
+                    {
                         Some(g) => (g.code.clone(), g.name.clone(), g.name_th.clone()),
                         None => {
                             // Fall back to nearest network.json station by distance.
                             let nearest = line
                                 .stations
                                 .iter()
+                                .filter(|g| !g.name.is_empty())
                                 .map(|g| {
                                     let q = proj.project(g.position[0], g.position[1], 0.0);
                                     let d2 = (q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2);
@@ -310,12 +400,14 @@ fn run() -> Result<(), String> {
             .map(|(i, (id, _, _))| (id.clone(), i as u16))
             .collect();
 
-        let (name_en, color_rgb) = match line.gtfs_route_id.as_deref() {
-            // Registry colour wins over the feed's: it is what the UI legend,
-            // the track deck and the train livery all already use.
-            Some(id) => (route_rows[id].short_name.clone(), parse_hex_color(&line.color)?),
-            None => (line.name.clone(), parse_hex_color(&line.color)?),
-        };
+        // Registry name/colour win over the feed's for both branches: they're
+        // what the UI legend, the track deck and the train livery already
+        // use, and they're unique — the GTFS route_short_name is not (the
+        // Namtang feed gives both SRT Dark Red (2026) and Light Red (2027)
+        // the bare short_name "Red", which the inspector's "<name> · run N"
+        // header would otherwise show identically for either line).
+        let color_rgb = parse_hex_color(&line.color)?;
+        let name_en = line.name.clone();
         routes.push(RouteDoc {
             gtfs_route_id: line.gtfs_route_id.clone().unwrap_or_default(),
             line_key: line.key.clone(),
