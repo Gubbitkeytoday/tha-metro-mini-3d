@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lerpBearing, yawToBearing } from "./followCamera";
+import { FollowCamera, lerpBearing, yawToBearing } from "./followCamera";
 
 /**
  * These two encode conventions that fail silently: a wrong sign or offset just
@@ -48,5 +48,37 @@ describe("lerpBearing", () => {
     let b = 0;
     for (let i = 0; i < 200; i++) b = lerpBearing(b, 90, 0.08);
     expect(b).toBeCloseTo(90, 1);
+  });
+});
+
+describe("FollowCamera.resetBearing", () => {
+  it("makes the next apply() jump straight to the target instead of easing", () => {
+    const cam = new FollowCamera();
+    const vehicleAt = (yaw: number) => {
+      const v = new Float32Array(8);
+      v[0] = 0; // x
+      v[1] = 0; // y
+      v[3] = yaw;
+      v[5] = 7; // run_idx
+      return v;
+    };
+    let lastBearing = NaN;
+    const mapStub = {
+      jumpTo: (opts: { bearing: number }) => {
+        lastBearing = opts.bearing;
+      },
+    } as unknown as Parameters<FollowCamera["apply"]>[0];
+
+    // Settle heading east (bearing 90) over several frames of easing.
+    cam.capture(vehicleAt(0), 1, 7);
+    for (let i = 0; i < 200; i++) cam.apply(mapStub);
+    expect(lastBearing).toBeCloseTo(90, 1);
+
+    // Switching to a train heading north (bearing 0) without resetBearing()
+    // would ease from the stale 90; resetBearing() forces an instant jump.
+    cam.capture(vehicleAt(Math.PI / 2), 1, 7);
+    cam.resetBearing();
+    cam.apply(mapStub);
+    expect(lastBearing).toBeCloseTo(0, 1);
   });
 });

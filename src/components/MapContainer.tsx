@@ -158,9 +158,17 @@ export function MapContainer() {
     window.addEventListener("keydown", onKeyDown);
 
     // Releasing follow must also clear the smoothed bearing, or the next
-    // follow starts from a stale heading.
+    // follow starts from a stale heading. Switching the followed train while
+    // still following (clicking train B while locked onto train A —
+    // selectRun() intentionally preserves `following`) needs the same
+    // treatment for bearing alone: the pose snaps instantly via capture(),
+    // but bearing eases, so leaving it set carries A's heading into B's shot.
     const unsubscribeFollow = useAppStore.subscribe((state, prev) => {
-      if (prev.following && !state.following) follow.reset();
+      if (prev.following && !state.following) {
+        follow.reset();
+      } else if (state.following && state.selectedRunIdx !== prev.selectedRunIdx) {
+        follow.resetBearing();
+      }
     });
 
     if (import.meta.env.DEV) {
