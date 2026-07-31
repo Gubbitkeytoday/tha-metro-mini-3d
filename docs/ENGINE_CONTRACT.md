@@ -38,8 +38,8 @@ rust-engine/                 # Cargo WORKSPACE root
 ├── Cargo.toml               # [workspace] members = ["sim-core", "wasm", "preprocessor"]
 ├── sim-core/                # pure Rust lib: cache model + interpolation. NO wasm deps.
 ├── wasm/                    # wasm-bindgen bindings crate (cdylib), name: metro-sim-wasm
-└── preprocessor/            # CLI bin: GTFS dir + green-line.json -> cache blob
-public/data/green-line.tmb   # generated binary cache (committed)
+└── preprocessor/            # CLI bin: GTFS dir + network.json (line registry) -> cache blob
+public/data/network.tmb      # generated binary cache (committed)
 src/sim/                     # TS: worker, loader, protocol types, clock store integration
 src/sim/protocol.ts          # message + buffer-layout constants (mirror of this doc)
 ```
@@ -48,7 +48,7 @@ src/sim/protocol.ts          # message + buffer-layout constants (mirror of this
 `rust-engine/preprocessor` (one workspace, less duplication). Do not create
 `tools/gtfs_preprocessor/`.
 
-## 2. Binary cache format — `green-line.tmb` (TMB = Thai Metro Binary)
+## 2. Binary cache format — `network.tmb` (TMB = Thai Metro Binary)
 
 Serialization: **bincode 2** (`bincode = { version = "2", features = ["serde"] }`,
 `bincode::serde::encode_to_vec / decode_from_slice`, standard config) of the
@@ -65,12 +65,16 @@ pub const TMB_MAGIC: u32 = 0x544D_4231; // "TMB1"
 #[derive(Serialize, Deserialize)]
 pub struct CacheDoc {
     pub magic: u32,              // TMB_MAGIC
-    pub version: u16,            // 1
+    pub version: u16,            // 2 (bumped in MVP 5 Task 4: RouteDoc gained line_key + simulated)
     pub feed_version: String,    // "20260729"
     pub generated_unix: i64,
     pub origin_lng: f64,         // MUST equal frontend ORIGIN_LNG_LAT
     pub origin_lat: f64,         // (100.5332, 13.7456)
-    pub routes: Vec<RouteDoc>,   // [0]=Sukhumvit(route_id 1), [1]=Silom(route_id 2)
+    pub routes: Vec<RouteDoc>,   // routes[i] == src/data/network.json `lines[i]` —
+                                  // registry-driven order, NOT a hardcoded pair. Today
+                                  // that's [0]=Sukhumvit(route_id "1"), [1]=Silom(route_id
+                                  // "2"), but the invariant is index == network.json line
+                                  // order == PatternDoc.route_idx, not those specific lines.
     pub services: Vec<ServiceDoc>,
     pub patterns: Vec<PatternDoc>,
     pub runs: Vec<RunDoc>,       // sorted by (service_idx, start_sec)
@@ -78,7 +82,11 @@ pub struct CacheDoc {
 
 #[derive(Serialize, Deserialize)]
 pub struct RouteDoc {
-    pub gtfs_route_id: String,   // "1" / "2"
+    pub gtfs_route_id: String,   // "1" / "2" / "" for a track-only (unsimulated) line
+    pub line_key: String,        // registry key from tools/lines.config.mjs — ties a
+                                  // cache route back to its network.json geometry/colour
+    pub simulated: bool,         // false = track geometry only: no patterns, no runs,
+                                  // no trains (e.g. a pre-revenue line with no gtfsRouteId)
     pub name_en: String,
     pub color_rgb: u32,          // 0x65B724 / 0x246B5B
     /// Track polyline in LOCAL ENU METERS relative to (origin_lng, origin_lat),
@@ -140,28 +148,46 @@ Preprocessor CLI:
 
 ```text
 cargo run -p preprocessor --release -- \
-  --gtfs <extracted-gtfs-dir> --track <path-to-src/data/green-line.json> \
-  --out public/data/green-line.tmb [--report <path.json>]
+  --gtfs <extracted-gtfs-dir> --track <path-to-src/data/network.json> \
+  --out public/data/network.tmb [--report <path.json>]
 ```
 
-- Builds each route's track from green-line.json branches (sukhumvit→routes[0],
-  silom→routes[1]): Catmull-Rom (centripetal) resample at ~10 m, offset z=+15.
-- Snaps each GTFS stop (by lat/lng) onto the resampled polyline → `arc_m`
-  (nearest point on any segment; reject snaps > 150 m with a hard error).
-- Direction handling: `arc_m` is measured along the branch polyline as stored;
-  direction_id 1 patterns simply have DEcreasing arc_m across their stop list.
-  The engine interpolates arc between consecutive stops either way — no
-  reversal logic anywhere else.
-- Stop→station mapping: GTFS stops for routes 1/2 match green-line.json
-  station ids (same feed) — but match by `stop_id`; fall back to nearest-
-  by-distance with a warning.
+- Route identity is registry-driven: the CLI parses `network.json` into
+  `TrackFile { lines: Vec<LineGeometry> }` (one entry per
+  `tools/lines.config.mjs` line) and builds `routes[i]` from `lines[i]`, in
+  that order — no hardcoded route-id list. `LineGeometry.gtfs_route_id` is
+  `Option<String>`: `Some(id)` -> the line is simulated (GTFS trips looked up
+  for that `route_id`, exactly as below); `None` -> the line is track
+  geometry only (`RouteDoc.simulated = false`, no patterns/runs for it, its
+  own station list from `network.json` is used directly instead of GTFS
+  stop_times). At least one line must have a `gtfsRouteId`, or the CLI fails
+  loudly.
+- Builds each route's track from its `network.json` line's `track` polyline:
+  Catmull-Rom (centripetal) resample at ~10 m, offset z=+15 (elevated
+  structure; other structure types carry their own z in the source geometry).
+- Snaps each stop (by lat/lng) onto the resampled polyline → `arc_m` (nearest
+  point on any segment; reject snaps > 150 m with a hard error). For a
+  simulated line the stops come from GTFS `stop_times`; for a track-only line
+  they come from the line's own `network.json` `stations` list.
+- Direction handling: `arc_m` is measured along the line's polyline as
+  stored; direction_id 1 patterns simply have DEcreasing arc_m across their
+  stop list. The engine interpolates arc between consecutive stops either
+  way — no reversal logic anywhere else.
+- Stop→station mapping (simulated lines): GTFS stops match the line's
+  `network.json` station ids (same feed) — but match by `stop_id`; fall back
+  to nearest-by-distance with a warning.
+- Registry colour wins over the feed's: `RouteDoc.color_rgb` is always parsed
+  from `network.json`'s `color` (`#RRGGBB`), never from GTFS `routes.txt`
+  `route_color` — that's what the UI legend, the track deck, and the train
+  livery already use.
 - Expands frequencies: for each frequency window of a pattern's trip, runs
   start at `start_time + k*headway_secs` for k=0.. while `< end_time`.
 - Writes `--report` JSON: `{stations, patterns, runs, services, bytes,
   gzip_bytes, per_route: [...]}` — used by tests and by the client-validation
   cross-check test.
 - MUST fail loudly (non-zero exit + message) on: missing required files,
-  empty expansion, snap distance > 150 m, unknown stop ids.
+  empty expansion, snap distance > 150 m, unknown stop ids, no simulated
+  lines in `network.json`.
 
 ## 3. sim-core API (pure Rust — unit-testable without wasm)
 
@@ -196,7 +222,7 @@ Vehicle record layout (stride 8 × f32) — **identical constants in
 | 3    | `yaw`     | radians, CCW from +x (east), from track tangent, **direction of travel** |
 | 4    | `state`   | 0 = dwelling at a station, 1 = in transit |
 | 5    | `run_idx` | index into CacheDoc.runs (exact f32 up to 2^24 — fine) |
-| 6    | `route_idx` | 0 = Sukhumvit, 1 = Silom |
+| 6    | `route_idx` | index into `CacheDoc.routes` == `network.json` line order (today: 0 = Sukhumvit, 1 = Silom) |
 | 7    | `progress`| 0..1 smoothed progress of current inter-station leg (0 while dwelling) |
 
 Motion math (F2.1/F2.2): for time `t` within a run, find the bracketing
@@ -281,7 +307,8 @@ same clock params (store them in Zustand when set).
   colored to `RouteDoc.color_rgb`, plus emissive-ish white cab tip at the
   front so direction of travel is visible. Matrix per vehicle from
   interpolated x/y/z/yaw. `count` set per frame; `instanceMatrix.needsUpdate`.
-- Wire into the existing `GreenLineLayer` scene; call
+- Wire into the existing `ThreeLayer` scene (renamed from `GreenLineLayer`
+  when the render pipeline generalized to an N-line network in MVP 5); call
   `map.triggerRepaint()` continuously while the engine is running (MapLibre
   only repaints on demand).
 - `src/stores/useAppStore.ts` additions (UI state ONLY — no per-frame data):
@@ -396,10 +423,12 @@ together.
 
 ## 8. Definition of done
 
-- MVP 2: `green-line.tmb` generated (< 3 MB compressed — expected ≪ 1 MB),
+- MVP 2: `network.tmb` generated (< 3 MB compressed — expected ≪ 1 MB),
   fetched + parsed client-side, validation summary (station/pattern/run/
   service counts + feed_version) matches the preprocessor report and is
-  visible in the UI; `cargo test` green.
+  visible in the UI; `cargo test` green. (Named `green-line.tmb` through MVP
+  2–4, when the network was Green Line only; renamed `network.tmb` in MVP 5
+  Task 4 when route identity became registry-driven — see §2.)
 - MVP 4: a train can be selected by clicking it, followed by the camera,
   inspected (route, headsign, origin/destination, next-stop ETA, full call
   list), a station's live board read, and the clock scrubbed to any time of
