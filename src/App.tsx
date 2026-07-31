@@ -4,6 +4,8 @@ import { TimeControls } from "./components/TimeControls";
 import { TimeScrubber } from "./components/TimeScrubber";
 import { TrainInspector } from "./components/TrainInspector";
 import { useAppStore } from "./stores/useAppStore";
+import network from "./data/network.json";
+import type { NetworkData } from "./types";
 
 export default function App() {
   const mapReady = useAppStore((s) => s.mapReady);
@@ -19,14 +21,15 @@ export default function App() {
           MVP 4 — BTS Green Line live schedule {mapReady ? "" : "· loading map…"}
         </p>
         <ul className="mt-2 space-y-1 text-xs text-slate-700">
-          <li className="flex items-center gap-2">
-            <span className="inline-block h-2 w-4 rounded-sm" style={{ background: "#7CB342" }} />
-            Sukhumvit Line (Khu Khot – Kheha)
-          </li>
-          <li className="flex items-center gap-2">
-            <span className="inline-block h-2 w-4 rounded-sm" style={{ background: "#00877C" }} />
-            Silom Line (National Stadium – Bang Wa)
-          </li>
+          {(network as unknown as NetworkData).lines.map((line) => (
+            <li key={line.key} className="flex items-center gap-2">
+              <span
+                className="inline-block h-2 w-4 rounded-sm"
+                style={{ background: line.color }}
+              />
+              {line.name}
+            </li>
+          ))}
         </ul>
         <p className="mt-2 text-[10px] text-slate-400">Click a train or station to inspect it.</p>
       </div>

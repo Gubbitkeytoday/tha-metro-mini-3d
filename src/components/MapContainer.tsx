@@ -8,7 +8,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // silently stalls (blank base map). Hand it a URL Vite actually emits; the
 // `?worker&url` suffix bundles the worker together with its shared chunk.
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import { GreenLineLayer } from "../map/ThreeLayer";
+import { NetworkLayer } from "../map/ThreeLayer";
 import { installCameraControls } from "../map/cameraControls";
 import { FollowCamera } from "../map/followCamera";
 import { pickAt } from "../map/selection";
@@ -16,8 +16,8 @@ import { VehicleManager } from "../map/VehicleManager";
 import { localToLngLat, ORIGIN_LNG_LAT } from "../map/coordinates";
 import { SimClient, activeSimClient } from "../sim/SimClient";
 import { useAppStore } from "../stores/useAppStore";
-import greenLine from "../data/green-line.json";
-import type { GreenLineData } from "../types";
+import network from "../data/network.json";
+import type { NetworkData } from "../types";
 
 setWorkerUrl(maplibreWorkerUrl);
 
@@ -63,7 +63,7 @@ export function MapContainer() {
     map.on("style.load", () => {
       const store = useAppStore.getState();
       const vehicleManager = new VehicleManager();
-      const layer = new GreenLineLayer(greenLine as unknown as GreenLineData, vehicleManager);
+      const layer = new NetworkLayer(network as unknown as NetworkData, vehicleManager);
       map.addLayer(layer);
       setMapReady(true);
 

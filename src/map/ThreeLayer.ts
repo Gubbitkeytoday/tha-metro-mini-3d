@@ -4,7 +4,7 @@ import type {
   Map as MapLibreMap,
 } from "maplibre-gl";
 import * as THREE from "three";
-import type { GreenLineData } from "../types";
+import type { NetworkData } from "../types";
 import type { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { MERC_PER_METER, ORIGIN_MERC } from "./coordinates";
 import { buildStationMarkers, buildTrackDeck, buildTrackLine } from "./trackGeometry";
@@ -18,8 +18,8 @@ import type { VehicleManager } from "./VehicleManager";
  * local-frame origin translation + meter scale into it before it ever
  * touches the GPU, so vertex data stays small (floating origin, §3A.5).
  */
-export class GreenLineLayer implements CustomLayerInterface {
-  id = "green-line-3d";
+export class NetworkLayer implements CustomLayerInterface {
+  id = "network-3d";
   type = "custom" as const;
   renderingMode = "3d" as const;
 
@@ -32,6 +32,8 @@ export class GreenLineLayer implements CustomLayerInterface {
     .scale(new THREE.Vector3(MERC_PER_METER, -MERC_PER_METER, MERC_PER_METER));
   private projection = new THREE.Matrix4();
   private lineMaterials: LineMaterial[] = [];
+  /** Per-line groups, index == route_idx — the unit the line selector toggles. */
+  private lineGroups: THREE.Group[] = [];
 
   /**
    * Per-frame hook, invoked at the start of every render() before drawing —
@@ -41,7 +43,7 @@ export class GreenLineLayer implements CustomLayerInterface {
   beforeRender: (() => void) | null = null;
 
   constructor(
-    private data: GreenLineData,
+    private data: NetworkData,
     private vehicles?: VehicleManager,
   ) {}
 
@@ -59,16 +61,26 @@ export class GreenLineLayer implements CustomLayerInterface {
     sun.position.set(-3000, -2000, 8000);
     scene.add(sun);
 
-    const branches = [this.data.branches.sukhumvit, this.data.branches.silom];
-    for (const branch of branches) {
-      scene.add(buildTrackDeck(branch));
-      const { line, material } = buildTrackLine(branch);
-      scene.add(line);
+    for (const line of this.data.lines) {
+      const group = new THREE.Group();
+      group.name = `line-${line.key}`;
+      group.add(buildTrackDeck(line));
+      const { line: centerline, material } = buildTrackLine(line);
+      group.add(centerline);
       this.lineMaterials.push(material);
+      group.add(buildStationMarkers([line]));
+      scene.add(group);
+      this.lineGroups.push(group);
     }
-    scene.add(buildStationMarkers(branches));
     if (this.vehicles) scene.add(...this.vehicles.meshes);
     this.scene = scene;
+  }
+
+  /** Show/hide one line's track + stations. Vehicles are hidden separately by
+   *  VehicleManager, which owns their instance counts. */
+  setLineVisible(index: number, visible: boolean): void {
+    const group = this.lineGroups[index];
+    if (group) group.visible = visible;
   }
 
   render(_gl: WebGL2RenderingContext, options: CustomRenderMethodInput): void {
@@ -95,6 +107,7 @@ export class GreenLineLayer implements CustomLayerInterface {
     });
     this.scene = null;
     this.lineMaterials = [];
+    this.lineGroups = [];
     // The GL context belongs to MapLibre — dispose Three's wrapper only.
     this.renderer?.dispose();
     this.renderer = null;
