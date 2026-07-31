@@ -3,7 +3,7 @@
 **Project Name:** Greater Bangkok Metro Mini 3D — 3D Transit Simulation Platform
 **Version:** 1.0.0
 **Status:** Draft / Technical Proposal
-**Last Updated:** 2026-07-30
+**Last Updated:** 2026-07-31
 **Repository:** [tha-metro-mini-3d](https://github.com/naiiytom/tha-metro-mini-3d)
 
 ---
@@ -243,6 +243,8 @@ $$
 **NF1 — Performance & frame rate.**
 Target 60 FPS on desktop (GTX 1050 / Apple M1 or equivalent) and 30+ FPS on mobile WebGL browsers. The Wasm simulation tick must complete in **< 3 ms per frame** for up to **300 concurrent active vehicles**.
 
+> **Status as of MVP 5 (2026-07-31), measured by `npm run verify:perf` against a production build of the full 9-line network:** 3 of 4 sub-checks pass. Sim tick p95 ≈ 0.2–0.3 ms (well under the 3 ms budget) and frame rate ≈ 100 FPS (well over both the 60/30 FPS targets) both pass comfortably, and no frame is truncated (peak 171–172 vehicles vs. `MAX_VEHICLES` 1024). The **300-concurrent-vehicle scale target is not yet reached**: the real network's measured daily peak (`public/data/network.report.json`'s `peak_concurrent`) is 171–172 vehicles, a fact about actual GTFS schedule density across these 9 lines, confirmed independently by both the preprocessor's own per-minute peak scan and the live harness — not a performance defect. `MAX_VEHICLES` = 1024 leaves ~6× headroom over that measured peak for MVP 6's remaining lines (MRT Blue, MRT Orange). The `verify:perf` assertion is left as a hard, currently-failing gate rather than weakened or satisfied with synthetic load, so a future regression (or a future denser network) is still caught.
+
 **NF2 — Initial load & optimization.**
 Total initial bundle **≤ 5 MB** (compressed assets + binary timetable). 3D GLTF models lazy-load asynchronously with Level-of-Detail (LOD) progressive detail.
 
@@ -366,6 +368,8 @@ Guiding principle: **prove the full render pipeline on one line before adding mo
 
 **Definition of done:** all elevated + at-grade lines (including Gold) render and simulate together within performance budget.
 
+**Delivered (2026-07-31).** The registry (`tools/lines.config.mjs`) grew from 2 lines to 9: Sukhumvit, Silom, MRT Purple, Airport Rail Link, MRT Pink, MRT Yellow, BTS Gold, SRT Dark Red, SRT Light Red — 155 stations, 34 trip patterns, 4,481 expanded runs, all pinned to real OSM relation ids and verified against the live Namtang GTFS feed. Line selector (F4.1), cross-route interchange metadata (auto-linked within 300 m plus a manual override list), and monorail/APM/commuter vehicle models (distinct consist lengths per vehicle type, verified against actual rendered geometry) are all in place and exercised by `npm run verify:mvp5` (6/6). `npm run verify:mvp4` still passes unchanged (14/14) — single-line interaction did not regress. **Performance is validated with real measured numbers, not just "toward" the target:** 3 of NF1's 4 sub-checks pass outright (sim tick, no truncation, frame rate); the 300-concurrent-vehicle scale target is not yet reached by this real network (measured peak 171–172 vehicles) — see §5's NF1 status note for the full picture and why that assertion is left failing on purpose rather than weakened.
+
 ### MVP 6 — Underground + environmental polish (full v1.0)
 
 **Goal:** Complete the network and the "wow" layer.
@@ -380,14 +384,14 @@ Guiding principle: **prove the full render pipeline on one line before adding mo
 
 ### MVP summary
 
-| MVP | Theme | Lines | Trains move? | Key requirements |
-|-----|-------|-------|--------------|------------------|
-| 1 | Track laid | Green only | No | F1.3, F3 bridge, §3A.4–3A.5 |
-| 2 | Data pipeline | Green only | No | F1.1–F1.2, NF6 |
-| 3 | Motion | Green only | **Yes** | F2, §3A.2–3A.3, 3A.7 |
-| 4 | Interaction/UI | Green only | Yes | F3.2, F4.2–F4.3, F2.3 |
-| 5 | Breadth | + Purple, ARL, Pink, Yellow, **Gold**, Red | Yes | F4.1, NF1 (scale) |
-| 6 | Underground + polish | + MRT Blue; + **Orange (track only)** = full | Yes (Orange: track only) | F3.2 underground, F3.3, NF2 |
+| MVP | Theme | Lines | Trains move? | Key requirements | Status |
+|-----|-------|-------|--------------|------------------|--------|
+| 1 | Track laid | Green only | No | F1.3, F3 bridge, §3A.4–3A.5 | Delivered |
+| 2 | Data pipeline | Green only | No | F1.1–F1.2, NF6 | Delivered |
+| 3 | Motion | Green only | **Yes** | F2, §3A.2–3A.3, 3A.7 | Delivered |
+| 4 | Interaction/UI | Green only | Yes | F3.2, F4.2–F4.3, F2.3 | Delivered |
+| 5 | Breadth | + Purple, ARL, Pink, Yellow, **Gold**, Red (9 lines total) | Yes | F4.1, NF1 (scale) | Delivered 2026-07-31 — NF1 3/4 (300-vehicle scale target not yet reached by the real network's 171–172 measured peak; see §5) |
+| 6 | Underground + polish | + MRT Blue; + **Orange (track only)** = full | Yes (Orange: track only) | F3.2 underground, F3.3, NF2 | Not started |
 
 ---
 
@@ -435,7 +439,7 @@ The following are explicitly excluded from v1.0 and recorded for future consider
 
 - **Data pipeline:** Preprocessor output validated against source GTFS (trip counts, stop sequences, service calendars) with automated checks.
 - **Simulation correctness:** For a sampled set of trips, computed positions at known times match scheduled stop locations within tolerance; no train overshoots its terminus or renders while inactive.
-- **Performance:** Frame-rate and Wasm tick-time targets (NF1) verified on reference hardware with 300 active vehicles.
+- **Performance:** Frame-rate and Wasm tick-time targets (NF1) verified on reference hardware with 300 active vehicles. As of MVP 5, `npm run verify:perf` verifies tick time, no-truncation, and frame rate against the real network (all pass); the 300-vehicle scale check itself is a known-failing gate against the current 9-line network's real 171–172-vehicle peak — see §5's NF1 status note.
 - **Bundle size:** CI check enforces the ≤ 5 MB initial-load budget (NF2).
 - **Cross-browser:** Smoke tests pass on the NF3 browser matrix.
 

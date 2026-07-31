@@ -1,4 +1,4 @@
-# Engine Contract — MVP 2 (data pipeline), MVP 3 (simulation), MVP 4 (queries)
+# Engine Contract — MVP 2 (data pipeline), MVP 3 (simulation), MVP 4 (queries), MVP 5 (multi-line breadth)
 
 Authoritative interface spec between the Rust side (preprocessor CLI, sim core,
 Wasm bindings) and the TypeScript side (worker, loader, rendering). Both sides
@@ -106,6 +106,17 @@ pub struct StationDoc {
     pub name_th: String,
     /// Station snapped ONTO the track polyline: arc-length position in meters.
     pub arc_m: f32,
+    /// Other routes' stations within walking distance (MVP 5 Task 7).
+    /// Symmetric, never self-referential; computed once by the preprocessor
+    /// (§2's link_interchanges, below) and baked into the cache — the engine
+    /// never computes this at runtime.
+    pub interchanges: Vec<InterchangeRef>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct InterchangeRef {
+    pub route_idx: u8,
+    pub station_idx: u16,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -152,16 +163,69 @@ cargo run -p preprocessor --release -- \
   --out public/data/network.tmb [--report <path.json>]
 ```
 
-- Route identity is registry-driven: the CLI parses `network.json` into
-  `TrackFile { lines: Vec<LineGeometry> }` (one entry per
-  `tools/lines.config.mjs` line) and builds `routes[i]` from `lines[i]`, in
-  that order — no hardcoded route-id list. `LineGeometry.gtfs_route_id` is
-  `Option<String>`: `Some(id)` -> the line is simulated (GTFS trips looked up
-  for that `route_id`, exactly as below); `None` -> the line is track
-  geometry only (`RouteDoc.simulated = false`, no patterns/runs for it, its
-  own station list from `network.json` is used directly instead of GTFS
-  stop_times). At least one line must have a `gtfsRouteId`, or the CLI fails
-  loudly.
+### 2.1 `network.json` input shape (MVP 5)
+
+Deserialized by the preprocessor as (`rust-engine/preprocessor/src/main.rs`,
+`#[serde(rename_all = "camelCase")]` — field names below are the JSON keys):
+
+```rust
+struct TrackFile {
+    lines: Vec<LineGeometry>,
+    /// GTFS stop_id pairs for interchange walkways the 300 m auto-link
+    /// radius cannot reach — see "Interchange linking" below. Optional,
+    /// defaults to empty.
+    interchange_overrides: Vec<[String; 2]>,
+}
+
+struct LineGeometry {
+    key: String,                    // registry key, e.g. "sukhumvit" — ties
+                                     // this entry back to tools/lines.config.mjs
+    name: String,                   // fallback display name for a track-only line
+    color: String,                  // "#RRGGBB" — wins over GTFS routes.txt route_color
+    gtfs_route_id: Option<String>,  // None = track geometry only, never simulated
+    track: Vec<[f64; 3]>,           // [lon, lat, altitude_m] polyline, pre-resample
+    stations: Vec<NetworkStation>,
+    /// GTFS stop_ids to drop from this line's simulation entirely (and any
+    /// trip serving one, taking its whole pattern with it) — e.g. the Pink
+    /// Line's Muang Thong Thani spur stops, which share Pink's gtfs_route_id
+    /// but sit ~1.2 km off the main-line-only track this entry fetches.
+    /// Optional, defaults to empty.
+    exclude_gtfs_stop_ids: Vec<String>,
+    /// GTFS stop_ids exempt from the 150 m hard snap-distance fail — for a
+    /// stop verified to be a real, different, nearby station rather than bad
+    /// geometry (still snapped and simulated; logged as a warning instead of
+    /// erroring). Optional, defaults to empty.
+    allow_large_snap_stop_ids: Vec<String>,
+}
+
+struct NetworkStation {
+    id: String,                 // gtfs_stop_id (or a synthetic id for track-only)
+    name: String,
+    name_th: String,
+    code: String,               // optional, defaults to ""
+    position: [f64; 3],         // [lon, lat, altitude_m]
+}
+```
+
+`tools/fetch-network.mjs` is the producer (OSM Overpass -> this shape, one
+entry per `tools/lines.config.mjs` `LINES` line, in registry order); the
+preprocessor and `src/data/network.json`'s consumer in the frontend
+(`MapContainer.tsx`, typed as `NetworkData` in `src/types/index.ts`) are both
+implemented against it.
+
+- Route identity is registry-driven: the CLI parses `network.json` into the
+  `TrackFile` above (one entry per `tools/lines.config.mjs` line) and builds
+  `routes[i]` from `lines[i]`, in that order — no hardcoded route-id list.
+  `LineGeometry.gtfs_route_id` is `Option<String>`: `Some(id)` -> the line is
+  simulated (GTFS trips looked up for that `route_id`, exactly as below);
+  `None` -> the line is track geometry only (`RouteDoc.simulated = false`, no
+  patterns/runs for it, its own station list from `network.json` is used
+  directly instead of GTFS stop_times). At least one line must have a
+  `gtfsRouteId`, or the CLI fails loudly. **As of MVP 5, no line in the
+  registry actually uses `gtfs_route_id: None`** — all 9 registered lines are
+  simulated; the mechanism exists and is tested (`sim-core` query tests) but
+  its first real user (MRT Orange) isn't in the registry yet, deferred to
+  MVP 6.
 - Builds each route's track from its `network.json` line's `track` polyline:
   Catmull-Rom (centripetal) resample at ~10 m, offset z=+15 (elevated
   structure; other structure types carry their own z in the source geometry).
@@ -180,8 +244,26 @@ cargo run -p preprocessor --release -- \
   from `network.json`'s `color` (`#RRGGBB`), never from GTFS `routes.txt`
   `route_color` — that's what the UI legend, the track deck, and the train
   livery already use.
-- Expands frequencies: for each frequency window of a pattern's trip, runs
-  start at `start_time + k*headway_secs` for k=0.. while `< end_time`.
+- **Dual run-expansion rule (MVP 5 Task 9, `runs_for_pattern()`).** GTFS
+  allows two different shapes for the same feed, and the Namtang feed uses
+  both: BTS-style routes (Sukhumvit, Silom) are frequency-based — relative
+  `stop_times` plus `frequencies.txt` headway windows, expanded into one run
+  per `start_time + k*headway_secs` for `k=0..` while `< end_time`; other
+  operators (ARL, SRT Red, etc.) publish concrete absolute departures with no
+  `frequencies.txt` rows for their trips at all, and become exactly one run
+  starting at the trip's own first-stop arrival time. A trip's pattern is
+  checked for frequency rows first — if any exist it expands by headway; if
+  none exist it falls back to the single-run form. A trip matching neither
+  shape (no frequencies AND an unparseable/missing first arrival) is a hard
+  error, never a silently-dropped zero-run pattern.
+- **Interchange linking (MVP 5 Task 7, `link_interchanges()`).** After all
+  routes/stations are built, every pair of *different* routes' stations
+  within `INTERCHANGE_RADIUS_M = 300.0` meters of each other gets a symmetric
+  `InterchangeRef` on both `StationDoc.interchanges` (§2, never
+  self-referential — same route never links to itself). `interchange_overrides`
+  (§2.1, GTFS stop_id pairs) adds links the radius can't reach — e.g. two
+  platforms of the same interchange 555 m apart that happen to share one
+  GTFS `stop_id` on both sides.
 - Writes `--report` JSON: `{stations, patterns, runs, services, bytes,
   gzip_bytes, per_route: [...], peak_concurrent, peak_concurrent_time,
   peak_concurrent_date, peak_concurrent_weekday, peak_concurrent_weekend}` —
@@ -196,9 +278,17 @@ cargo run -p preprocessor --release -- \
   (`{date, peak, time}`) so a weekend-specific spike isn't hidden by a bigger
   weekday number. This answers "is MAX_VEHICLES big enough" from real data
   rather than a guess — for the Green Line alone (2 routes) the observed peak
-  is 100 concurrent vehicles (weekday, 07:46), well under both MAX_VEHICLES
-  and the SRS NF1 300-concurrent target; the 1024 ceiling is headroom for the
-  full ~9-line network Task 11 adds, not sized off this number. 1440 extra
+  was 100 concurrent vehicles (weekday, 07:46), well under both MAX_VEHICLES
+  and the SRS NF1 300-concurrent target; the 1024 ceiling was sized as
+  headroom for the full ~9-line network Task 11 adds, not off that number.
+  **With the full 9-line network (Task 11), the real measured peak is
+  171–172 concurrent vehicles** (weekday 07:52, per `network.report.json`'s
+  `peak_concurrent`/`peak_concurrent_weekday`) — comfortably under 1024, but
+  under the SRS NF1 300-concurrent target too. `npm run verify:perf` leaves
+  that assertion failing on purpose (see ENGINE_CONTRACT §8 / CLAUDE.md)
+  rather than weakening it or fabricating load to pass it; it is real GTFS
+  schedule density for these lines, not a defect in the engine, buffer sizing,
+  or the scan itself. 1440 extra
   `evaluate()` calls per scan run in-process against the buffer the
   preprocessor already allocated for its own self-check, adding a fraction of
   a second to preprocessing — negligible next to GTFS parsing/IO.
@@ -257,7 +347,7 @@ Vehicle record layout (stride 8 × f32) — **identical constants in
 | 3    | `yaw`     | radians, CCW from +x (east), from track tangent, **direction of travel** |
 | 4    | `state`   | 0 = dwelling at a station, 1 = in transit |
 | 5    | `run_idx` | index into CacheDoc.runs (exact f32 up to 2^24 — fine) |
-| 6    | `route_idx` | index into `CacheDoc.routes` == `network.json` line order (today: 0 = Sukhumvit, 1 = Silom) |
+| 6    | `route_idx` | index into `CacheDoc.routes` == `network.json` line order == `tools/lines.config.mjs` `LINES` order (the registry-index invariant, §2.1 — NOT a hardcoded pair; as of MVP 5 there are 9 routes, [0]=Sukhumvit … [8]=SRT Light Red) |
 | 7    | `progress`| 0..1 smoothed progress of current inter-station leg (0 while dwelling) |
 
 Motion math (F2.1/F2.2): for time `t` within a run, find the bracketing
@@ -425,6 +515,16 @@ pub fn station_board_json(&self, route_idx: u8, station_idx: u16,
 pub fn stations_json(&self) -> String;
 ```
 
+There is deliberately **no `routes_json()`** (or equivalent) on this surface.
+Per-route *display* metadata the UI needs at rest — name, colour, structure,
+vehicle type, the legend/line-selector list — comes straight from the
+frontend's own `src/data/network.json` import (`MapContainer.tsx`:
+`store.setRoutes(net.lines)`), never from a wasm round-trip; `RouteDoc`'s
+`name_en`/`color_rgb` inside the cache exist for the engine's own use
+(`RunDetail.route_name`/`color_rgb` above) and happen to usually agree with
+the registry's values, but the UI never depends on that agreement for
+anything it renders at rest.
+
 Worker protocol additions (§5), a request/response pair keyed by `id`:
 
 ```ts
@@ -478,3 +578,20 @@ together.
   tangent (opposite directions on the two tracks); no vehicles before first
   service (~06:00) or long after last runs; warp 1×/5×/10×/60× works; 60 FPS
   target: instanced meshes, no per-frame React state.
+- MVP 5: the whole registry (9 lines, 155 stations, 4,481 runs) renders and
+  simulates together — asserted by `npm run verify:mvp5` (6/6 as of this
+  writing: every registry line renders in order; trains run on 3+ lines at
+  once; hiding a line stops its rendering but not its simulation or its
+  clickability; an interchange station shows a transfer chip; a monorail's
+  *rendered* geometry — not just its config table — is shorter than a
+  heavy-rail train's) — and `npm run verify:mvp4` still passes unchanged (14
+  checks), i.e. single-line interaction did not regress. **NF1 is 3/4, not
+  4/4, by design, not by oversight:** `npm run verify:perf` against the
+  production build measures sim tick p95 ≈ 0.2–0.3 ms (< 3 ms target, pass),
+  no frame truncated (peak 171–172 vs `MAX_VEHICLES` 1024, pass), ~100 FPS
+  (≥ 55 target, pass) — but the ≥300-concurrent-vehicles assertion fails,
+  because the real 9-line network's measured peak (§2's peak-concurrent scan)
+  is 171–172 vehicles, not a bug anywhere in this contract's implementation.
+  The assertion is left as a hard, currently-failing gate rather than
+  weakened or gamed with synthetic load — see CLAUDE.md's "MVP 5's one
+  disclosed gap."
