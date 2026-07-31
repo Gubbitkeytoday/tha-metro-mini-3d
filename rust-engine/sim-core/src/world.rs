@@ -285,6 +285,8 @@ pub(crate) mod tests_support {
         // Straight track along +x: 3 points, 100 m apart, then a corner north.
         let route = RouteDoc {
             gtfs_route_id: "1".into(),
+            line_key: "test".into(),
+            simulated: true,
             name_en: "Test".into(),
             color_rgb: 0x65B724,
             track_xyz: vec![
@@ -332,7 +334,7 @@ pub(crate) mod tests_support {
         };
         CacheDoc {
             magic: TMB_MAGIC,
-            version: 1,
+            version: TMB_VERSION,
             feed_version: "test".into(),
             generated_unix: 0,
             origin_lng: 100.5332,

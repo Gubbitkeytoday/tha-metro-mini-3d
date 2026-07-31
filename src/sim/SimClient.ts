@@ -101,8 +101,8 @@ export class SimClient {
 
   private async load(): Promise<void> {
     try {
-      const res = await fetch("/data/green-line.tmb");
-      if (!res.ok) throw new Error(`green-line.tmb: HTTP ${res.status}`);
+      const res = await fetch("/data/network.tmb");
+      if (!res.ok) throw new Error(`network.tmb: HTTP ${res.status}`);
       const cache = await res.arrayBuffer();
       if (this.disposed) return;
       this.post({ kind: "init", cache }, [cache]);

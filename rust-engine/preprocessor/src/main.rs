@@ -1,9 +1,14 @@
-//! GTFS + green-line.json -> public/data/green-line.tmb (contract §2).
+//! GTFS + network.json -> public/data/network.tmb (contract §2).
+//!
+//! Route identity comes from the line registry (src/data/network.json,
+//! generated from tools/lines.config.mjs): cache route order == network.json
+//! line order, and a line with no `gtfsRouteId` is encoded as track geometry
+//! only (`RouteDoc.simulated = false`) — rendered, never simulated.
 //!
 //! Usage:
 //!   cargo run -p preprocessor --release -- \
-//!     --gtfs <extracted-gtfs-dir> --track src/data/green-line.json \
-//!     --out public/data/green-line.tmb [--report public/data/green-line.report.json]
+//!     --gtfs <extracted-gtfs-dir> --track src/data/network.json \
+//!     --out public/data/network.tmb [--report public/data/network.report.json]
 
 mod gtfs;
 mod spline;
@@ -19,31 +24,42 @@ use sim_core::geo::{EnuProjector, ORIGIN_LNG_LAT};
 use sim_core::model::*;
 use sim_core::SimWorld;
 
-const ROUTE_IDS: [&str; 2] = ["1", "2"]; // [0]=Sukhumvit, [1]=Silom
-const BRANCH_KEYS: [&str; 2] = ["sukhumvit", "silom"];
 const RESAMPLE_SPACING_M: f64 = 10.0;
 const MAX_SNAP_M: f64 = 150.0;
 
 #[derive(Deserialize)]
 struct TrackFile {
-    branches: HashMap<String, Branch>,
+    lines: Vec<LineGeometry>,
 }
 
 #[derive(Deserialize)]
-struct Branch {
+#[serde(rename_all = "camelCase")]
+struct LineGeometry {
+    key: String,
+    /// Fallback display name for a track-only line (no `gtfs_route_id`).
+    name: String,
+    color: String,
+    /// None = track geometry only; rendered, never simulated.
+    gtfs_route_id: Option<String>,
     track: Vec<[f64; 3]>,
-    stations: Vec<GreenStation>,
+    stations: Vec<NetworkStation>,
 }
 
 #[derive(Deserialize)]
-struct GreenStation {
+#[serde(rename_all = "camelCase")]
+struct NetworkStation {
     id: String,
     name: String,
-    #[serde(rename = "nameTh")]
     name_th: String,
     #[serde(default)]
     code: String,
     position: [f64; 3],
+}
+
+/// `#RRGGBB` from the registry -> the u32 the cache and UI use.
+fn parse_hex_color(s: &str) -> Result<u32, String> {
+    u32::from_str_radix(s.trim_start_matches('#'), 16)
+        .map_err(|_| format!("bad colour '{s}' (want #RRGGBB)"))
 }
 
 struct Args {
@@ -97,16 +113,25 @@ fn run() -> Result<(), String> {
     let track_file: TrackFile =
         serde_json::from_str(&track_json).map_err(|e| format!("bad track JSON: {e}"))?;
 
+    let simulated_route_ids: Vec<&str> = track_file
+        .lines
+        .iter()
+        .filter_map(|l| l.gtfs_route_id.as_deref())
+        .collect();
+    if simulated_route_ids.is_empty() {
+        return Err("network.json has no simulated lines (every gtfsRouteId is null)".into());
+    }
+
     let feed_version = gtfs::read_feed_version(gtfs_dir)?;
-    let route_rows = gtfs::read_routes(gtfs_dir, &ROUTE_IDS)?;
-    for id in ROUTE_IDS {
-        if !route_rows.contains_key(id) {
+    let route_rows = gtfs::read_routes(gtfs_dir, &simulated_route_ids)?;
+    for id in &simulated_route_ids {
+        if !route_rows.contains_key(*id) {
             return Err(format!("route_id '{id}' not found in routes.txt"));
         }
     }
-    let trips = gtfs::read_trips(gtfs_dir, &ROUTE_IDS)?;
+    let trips = gtfs::read_trips(gtfs_dir, &simulated_route_ids)?;
     if trips.is_empty() {
-        return Err("no trips found for routes 1/2".into());
+        return Err("no trips found for the simulated routes".into());
     }
     let trip_ids: HashSet<String> = trips.iter().map(|t| t.trip_id.clone()).collect();
     let service_ids: HashSet<String> = trips.iter().map(|t| t.service_id.clone()).collect();
@@ -132,12 +157,8 @@ fn run() -> Result<(), String> {
     let mut station_maps: Vec<HashMap<String, u16>> = Vec::new(); // stop_id -> station_idx
     let mut max_snap_m = 0.0f64;
 
-    for (route_id, branch_key) in ROUTE_IDS.iter().zip(BRANCH_KEYS) {
-        let branch = track_file
-            .branches
-            .get(branch_key)
-            .ok_or(format!("branch '{branch_key}' missing from track JSON"))?;
-        let ctrl: Vec<[f64; 3]> = branch
+    for line in &track_file.lines {
+        let ctrl: Vec<[f64; 3]> = line
             .track
             .iter()
             .map(|&[lng, lat, alt]| proj.project(lng, lat, alt))
@@ -145,80 +166,114 @@ fn run() -> Result<(), String> {
         let poly = spline::catmull_rom_resample(&ctrl, RESAMPLE_SPACING_M)?;
         let arcs = spline::cumulative_arc(&poly);
 
-        // Stop ids served by this route's patterns.
-        let route_stop_ids: HashSet<&String> = trips
-            .iter()
-            .filter(|t| t.route_id == *route_id)
-            .flat_map(|t| {
-                stop_times
-                    .get(&t.trip_id)
-                    .map(|rows| rows.iter().map(|s| &s.stop_id))
-                    .into_iter()
-                    .flatten()
-            })
-            .collect();
-        if route_stop_ids.is_empty() {
-            return Err(format!("route {route_id}: no stop_times rows"));
-        }
+        // Snap each station onto this line's polyline. (stop_id, snap_d, doc)
+        let mut snapped: Vec<(String, f64, StationDoc)> = Vec::new();
 
-        let green_by_id: HashMap<&str, &GreenStation> =
-            branch.stations.iter().map(|s| (s.id.as_str(), s)).collect();
-
-        // Snap each GTFS stop (by lat/lng from stops.txt) onto the polyline.
-        let mut snapped: Vec<(String, f64, StationDoc)> = Vec::new(); // (stop_id, snap_d, doc)
-        for stop_id in route_stop_ids {
-            let row = &stop_rows[stop_id];
-            let p = proj.project(row.lon, row.lat, 0.0);
-            let (arc_m, snap_d) = spline::snap_to_polyline(&poly, &arcs, [p[0], p[1]]);
-            if snap_d > MAX_SNAP_M {
-                return Err(format!(
-                    "stop {stop_id} snaps {snap_d:.1} m from route {route_id} track (limit {MAX_SNAP_M} m)"
-                ));
-            }
-            if snap_d > 40.0 {
-                eprintln!(
-                    "warning: stop {stop_id} ({}) is {snap_d:.1} m from route {route_id} track",
-                    row.name
-                );
-            }
-            max_snap_m = max_snap_m.max(snap_d);
-            let (code, name_en, name_th) = match green_by_id.get(stop_id.as_str()) {
-                Some(g) => (g.code.clone(), g.name.clone(), g.name_th.clone()),
-                None => {
-                    // Fall back to nearest green-line.json station by distance.
-                    let nearest = branch
-                        .stations
-                        .iter()
-                        .map(|g| {
-                            let q = proj.project(g.position[0], g.position[1], 0.0);
-                            let d2 = (q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2);
-                            (d2, g)
-                        })
-                        .min_by(|a, b| a.0.total_cmp(&b.0));
-                    let (th, en) = gtfs::split_th_en(&row.name);
-                    match nearest {
-                        Some((d2, g)) if d2.sqrt() < 100.0 => {
-                            eprintln!(
-                                "warning: stop {stop_id} not in green-line.json; matched '{}' by distance ({:.1} m)",
-                                g.name,
-                                d2.sqrt()
-                            );
-                            (g.code.clone(), g.name.clone(), g.name_th.clone())
-                        }
-                        _ => {
-                            eprintln!(
-                                "warning: stop {stop_id} not in green-line.json; using GTFS name '{en}'"
-                            );
-                            (String::new(), en, th)
-                        }
-                    }
+        match line.gtfs_route_id.as_deref() {
+            Some(route_id) => {
+                // Stop ids served by this route's patterns.
+                let route_stop_ids: HashSet<&String> = trips
+                    .iter()
+                    .filter(|t| t.route_id == route_id)
+                    .flat_map(|t| {
+                        stop_times
+                            .get(&t.trip_id)
+                            .map(|rows| rows.iter().map(|s| &s.stop_id))
+                            .into_iter()
+                            .flatten()
+                    })
+                    .collect();
+                if route_stop_ids.is_empty() {
+                    return Err(format!("route {route_id}: no stop_times rows"));
                 }
-            };
-            snapped.push((
-                stop_id.clone(),
-                snap_d,
-                StationDoc { gtfs_stop_id: stop_id.clone(), code, name_en, name_th, arc_m: arc_m as f32 },
-            ));
+
+                let network_by_id: HashMap<&str, &NetworkStation> =
+                    line.stations.iter().map(|s| (s.id.as_str(), s)).collect();
+
+                // Snap each GTFS stop (by lat/lng from stops.txt) onto the polyline.
+                for stop_id in route_stop_ids {
+                    let row = &stop_rows[stop_id];
+                    let p = proj.project(row.lon, row.lat, 0.0);
+                    let (arc_m, snap_d) = spline::snap_to_polyline(&poly, &arcs, [p[0], p[1]]);
+                    if snap_d > MAX_SNAP_M {
+                        return Err(format!(
+                            "stop {stop_id} snaps {snap_d:.1} m from route {route_id} track (limit {MAX_SNAP_M} m)"
+                        ));
+                    }
+                    if snap_d > 40.0 {
+                        eprintln!(
+                            "warning: stop {stop_id} ({}) is {snap_d:.1} m from route {route_id} track",
+                            row.name
+                        );
+                    }
+                    max_snap_m = max_snap_m.max(snap_d);
+                    let (code, name_en, name_th) = match network_by_id.get(stop_id.as_str()) {
+                        Some(g) => (g.code.clone(), g.name.clone(), g.name_th.clone()),
+                        None => {
+                            // Fall back to nearest network.json station by distance.
+                            let nearest = line
+                                .stations
+                                .iter()
+                                .map(|g| {
+                                    let q = proj.project(g.position[0], g.position[1], 0.0);
+                                    let d2 = (q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2);
+                                    (d2, g)
+                                })
+                                .min_by(|a, b| a.0.total_cmp(&b.0));
+                            let (th, en) = gtfs::split_th_en(&row.name);
+                            match nearest {
+                                Some((d2, g)) if d2.sqrt() < 100.0 => {
+                                    eprintln!(
+                                        "warning: stop {stop_id} not in network.json; matched '{}' by distance ({:.1} m)",
+                                        g.name,
+                                        d2.sqrt()
+                                    );
+                                    (g.code.clone(), g.name.clone(), g.name_th.clone())
+                                }
+                                _ => {
+                                    eprintln!(
+                                        "warning: stop {stop_id} not in network.json; using GTFS name '{en}'"
+                                    );
+                                    (String::new(), en, th)
+                                }
+                            }
+                        }
+                    };
+                    snapped.push((
+                        stop_id.clone(),
+                        snap_d,
+                        StationDoc { gtfs_stop_id: stop_id.clone(), code, name_en, name_th, arc_m: arc_m as f32 },
+                    ));
+                }
+            }
+            None => {
+                // Track-only line (no gtfsRouteId): there are no GTFS trips to
+                // snap against, so the registry's own station list is
+                // authoritative — snap each declared station onto this line's
+                // polyline directly.
+                for s in &line.stations {
+                    let p = proj.project(s.position[0], s.position[1], 0.0);
+                    let (arc_m, snap_d) = spline::snap_to_polyline(&poly, &arcs, [p[0], p[1]]);
+                    if snap_d > MAX_SNAP_M {
+                        return Err(format!(
+                            "station {} snaps {snap_d:.1} m from line '{}' track (limit {MAX_SNAP_M} m)",
+                            s.id, line.key
+                        ));
+                    }
+                    max_snap_m = max_snap_m.max(snap_d);
+                    snapped.push((
+                        s.id.clone(),
+                        snap_d,
+                        StationDoc {
+                            gtfs_stop_id: s.id.clone(),
+                            code: s.code.clone(),
+                            name_en: s.name.clone(),
+                            name_th: s.name_th.clone(),
+                            arc_m: arc_m as f32,
+                        },
+                    ));
+                }
+            }
         }
 
         // Order by arc ascending; must be strictly increasing.
@@ -226,8 +281,8 @@ fn run() -> Result<(), String> {
         for w in snapped.windows(2) {
             if w[1].2.arc_m <= w[0].2.arc_m {
                 return Err(format!(
-                    "route {route_id}: stations {} and {} share arc position {:.1}",
-                    w[0].0, w[1].0, w[0].2.arc_m
+                    "line {}: stations {} and {} share arc position {:.1}",
+                    line.key, w[0].0, w[1].0, w[0].2.arc_m
                 ));
             }
         }
@@ -237,11 +292,18 @@ fn run() -> Result<(), String> {
             .map(|(i, (id, _, _))| (id.clone(), i as u16))
             .collect();
 
-        let rr = &route_rows[*route_id];
+        let (name_en, color_rgb) = match line.gtfs_route_id.as_deref() {
+            // Registry colour wins over the feed's: it is what the UI legend,
+            // the track deck and the train livery all already use.
+            Some(id) => (route_rows[id].short_name.clone(), parse_hex_color(&line.color)?),
+            None => (line.name.clone(), parse_hex_color(&line.color)?),
+        };
         routes.push(RouteDoc {
-            gtfs_route_id: route_id.to_string(),
-            name_en: rr.short_name.clone(),
-            color_rgb: rr.color_rgb,
+            gtfs_route_id: line.gtfs_route_id.clone().unwrap_or_default(),
+            line_key: line.key.clone(),
+            simulated: line.gtfs_route_id.is_some(),
+            name_en,
+            color_rgb,
             track_xyz: poly.iter().map(|p| [p[0] as f32, p[1] as f32, p[2] as f32]).collect(),
             track_arc_m: arcs.iter().map(|&a| a as f32).collect(),
             stations: snapped.into_iter().map(|(_, _, s)| s).collect(),
@@ -273,10 +335,16 @@ fn run() -> Result<(), String> {
     }
 
     // ---- Patterns ----------------------------------------------------------
+    let route_idx_by_gtfs_id: HashMap<&str, usize> = track_file
+        .lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| l.gtfs_route_id.as_deref().map(|id| (id, i)))
+        .collect();
     let mut patterns = Vec::new();
     let mut pattern_idx_by_trip: HashMap<String, u16> = HashMap::new();
     for trip in &trips {
-        let route_idx = ROUTE_IDS.iter().position(|r| *r == trip.route_id).unwrap();
+        let route_idx = route_idx_by_gtfs_id[trip.route_id.as_str()];
         let rows = stop_times
             .get(&trip.trip_id)
             .ok_or(format!("trip {} has no stop_times", trip.trip_id))?;
@@ -411,4 +479,41 @@ fn run() -> Result<(), String> {
     }
     println!("{report_str}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A two-line network file, minimal but structurally real.
+    ///
+    /// Uses a double-hash raw-string delimiter: the JSON contains `"#111111"`
+    /// (a `"` immediately followed by `#`), which would otherwise close a
+    /// single-hash `r#"..."#` raw string early.
+    fn track_json() -> &'static str {
+        r##"{"lines":[
+            {"key":"a","name":"A","color":"#111111","structure":"elevated",
+             "vehicleType":"heavy","gtfsRouteId":"1","track":[[100.5,13.7,15.0],[100.51,13.7,15.0]],
+             "stations":[{"id":"s1","name":"S1","nameTh":"ส1","code":"A1","position":[100.5,13.7,15.0]}]},
+            {"key":"b","name":"B","color":"#222222","structure":"atGrade",
+             "vehicleType":"commuter","gtfsRouteId":"9","track":[[100.6,13.8,0.5],[100.61,13.8,0.5]],
+             "stations":[{"id":"s2","name":"S2","nameTh":"ส2","code":"B1","position":[100.6,13.8,0.5]}]}
+        ]}"##
+    }
+
+    #[test]
+    fn route_order_follows_network_json_line_order() {
+        let file: TrackFile = serde_json::from_str(track_json()).unwrap();
+        assert_eq!(file.lines[0].key, "a");
+        assert_eq!(file.lines[1].key, "b");
+        // The invariant the whole plan rests on: routes[i] is lines[i].
+        let ids: Vec<&str> = file.lines.iter().map(|l| l.gtfs_route_id.as_deref().unwrap()).collect();
+        assert_eq!(ids, vec!["1", "9"]);
+    }
+
+    #[test]
+    fn rejects_a_network_file_with_no_lines() {
+        let file: TrackFile = serde_json::from_str(r#"{"lines":[]}"#).unwrap();
+        assert!(file.lines.is_empty(), "empty networks must be caught by run(), not silently encoded");
+    }
 }
