@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { StationInfo, ValidationSummary } from "../sim/protocol";
 import type { ClockParams } from "../sim/SimClient";
+import type { LineGeometry } from "../types";
 
 /**
  * UI-facing state only (SRS §3A.7): per-frame render/kinematic state must
@@ -51,9 +52,22 @@ interface AppState {
   /** Static station list from the engine, fetched once at ready. */
   stations: StationInfo[];
   setStations: (stations: StationInfo[]) => void;
+
+  // ---- MVP 5 line visibility (F4.1) ----
+
+  /** Line table from network.json, index == route_idx. */
+  routes: LineGeometry[];
+  setRoutes: (routes: LineGeometry[]) => void;
+
+  /** Route indices the user has switched off (F4.1). Array, not Set —
+   *  Zustand equality checks are reference-based and a Set mutated in place
+   *  would not re-render. */
+  hiddenRoutes: number[];
+  toggleRoute: (routeIdx: number) => void;
+  isRouteVisible: (routeIdx: number) => boolean;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   mapReady: false,
   setMapReady: (ready) => set({ mapReady: ready }),
 
@@ -93,4 +107,16 @@ export const useAppStore = create<AppState>((set) => ({
 
   stations: [],
   setStations: (stations) => set({ stations }),
+
+  routes: [],
+  setRoutes: (routes) => set({ routes }),
+
+  hiddenRoutes: [],
+  toggleRoute: (routeIdx) =>
+    set((s) => ({
+      hiddenRoutes: s.hiddenRoutes.includes(routeIdx)
+        ? s.hiddenRoutes.filter((r) => r !== routeIdx)
+        : [...s.hiddenRoutes, routeIdx],
+    })),
+  isRouteVisible: (routeIdx) => !get().hiddenRoutes.includes(routeIdx),
 }));

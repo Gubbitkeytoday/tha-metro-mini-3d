@@ -53,6 +53,7 @@ export function MapContainer() {
     const removeCameraControls = installCameraControls(map);
 
     let sim: SimClient | null = null;
+    let unsubscribeVisibility: (() => void) | null = null;
     let rafId = 0;
     const follow = new FollowCamera();
     // Latest interpolated poses, kept for click hit-testing. Owned by the
@@ -69,6 +70,18 @@ export function MapContainer() {
       const layer = new NetworkLayer(net, vehicleManager);
       map.addLayer(layer);
       setMapReady(true);
+      store.setRoutes(net.lines);
+      // Visibility is UI state, so it drives the scene through a subscription
+      // rather than the per-frame path.
+      unsubscribeVisibility = useAppStore.subscribe((state, prev) => {
+        if (state.hiddenRoutes === prev.hiddenRoutes) return;
+        for (let i = 0; i < net.lines.length; i++) {
+          const visible = !state.hiddenRoutes.includes(i);
+          layer.setLineVisible(i, visible);
+          vehicleManager.setRouteVisible(i, visible);
+        }
+        map.triggerRepaint();
+      });
 
       store.setEngineStatus("loading");
       let lastCountUpdate = 0;
@@ -193,6 +206,7 @@ export function MapContainer() {
       cancelAnimationFrame(rafId);
       removeCameraControls();
       unsubscribeFollow();
+      unsubscribeVisibility?.();
       map.off("click", onMapClick);
       map.off("dragstart", onDragStart);
       window.removeEventListener("keydown", onKeyDown);
