@@ -62,8 +62,11 @@ export function MapContainer() {
 
     map.on("style.load", () => {
       const store = useAppStore.getState();
-      const vehicleManager = new VehicleManager();
-      const layer = new NetworkLayer(network as unknown as NetworkData, vehicleManager);
+      const net = network as unknown as NetworkData;
+      const vehicleManager = new VehicleManager(
+        net.lines.map((l) => ({ color: l.color, vehicleType: l.vehicleType })),
+      );
+      const layer = new NetworkLayer(net, vehicleManager);
       map.addLayer(layer);
       setMapReady(true);
 
