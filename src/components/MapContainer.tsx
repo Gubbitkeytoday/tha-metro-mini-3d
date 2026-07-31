@@ -34,6 +34,14 @@ export function MapContainer() {
       pitch: 55,
       bearing: -15,
       maxPitch: 80,
+      // Default is 3px; ordinary mouse clicks routinely move a few px between
+      // pointerdown/up, which MapLibre's dragPan handler then reclassifies as
+      // a pan (firing dragstart instead of click). Combined with onDragStart
+      // below (which drops `following` on any real pan), that made the very
+      // next click after starting to follow a train cancel it — "follow only
+      // works once." A few extra px absorbs normal click jitter without
+      // affecting genuine drag gestures.
+      clickTolerance: 6,
       // v5+ moved GL context flags out of MapOptions into this bag.
       canvasContextAttributes: { antialias: true },
       attributionControl: {
@@ -150,9 +158,17 @@ export function MapContainer() {
     window.addEventListener("keydown", onKeyDown);
 
     // Releasing follow must also clear the smoothed bearing, or the next
-    // follow starts from a stale heading.
+    // follow starts from a stale heading. Switching the followed train while
+    // still following (clicking train B while locked onto train A —
+    // selectRun() intentionally preserves `following`) needs the same
+    // treatment for bearing alone: the pose snaps instantly via capture(),
+    // but bearing eases, so leaving it set carries A's heading into B's shot.
     const unsubscribeFollow = useAppStore.subscribe((state, prev) => {
-      if (prev.following && !state.following) follow.reset();
+      if (prev.following && !state.following) {
+        follow.reset();
+      } else if (state.following && state.selectedRunIdx !== prev.selectedRunIdx) {
+        follow.resetBearing();
+      }
     });
 
     if (import.meta.env.DEV) {

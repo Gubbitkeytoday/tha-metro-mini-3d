@@ -90,4 +90,16 @@ export class FollowCamera {
     this.pose = null;
     this.bearing = null;
   }
+
+  /**
+   * Drop only the smoothed bearing, not the pose. Switching the followed run
+   * while still following (train A -> train B) keeps `capture()` overwriting
+   * `pose` every frame regardless of whose it is, so the center never stales;
+   * but `bearing` only moves via `lerpBearing`, so without this it would ease
+   * from A's last heading toward B's — a few hundred ms of wrong-facing
+   * camera right after the switch.
+   */
+  resetBearing(): void {
+    this.bearing = null;
+  }
 }

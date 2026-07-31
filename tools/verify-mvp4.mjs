@@ -243,6 +243,45 @@ check(
   `offset ${lock0?.toFixed(2)} m -> ${lock1?.toFixed(2)} m`,
 );
 
+// Regression: MapLibre's default 3px clickTolerance let ordinary pointer
+// jitter between mousedown/mouseup get misclassified as a drag, firing
+// dragstart -> onDragStart -> setFollowing(false), so the very next click
+// after engaging follow silently cancelled it. page.mouse.click() never
+// moves the pointer between down/up, so it can't reproduce this — the
+// down/move/up sequence below injects real jitter, under the 6px tolerance
+// but over MapLibre's 3px default.
+const jitterPoint = await page.evaluate((runIdx) => {
+  const c = window.__sim.current;
+  const { vehicles, count } = c.getInterpolated(performance.now());
+  for (let i = 0; i < count; i++) {
+    const o = i * 8;
+    if (vehicles[o + 5] === runIdx) {
+      const p = window.__map.project(window.__localToLngLat(vehicles[o], vehicles[o + 1]));
+      return { x: p.x, y: p.y };
+    }
+  }
+  return null;
+}, live.runIdx);
+if (jitterPoint) {
+  await page.mouse.move(jitterPoint.x, jitterPoint.y);
+  await page.mouse.down();
+  await page.mouse.move(jitterPoint.x + 4, jitterPoint.y + 2);
+  await page.mouse.up();
+  await new Promise((r) => setTimeout(r, 300));
+  const stillFollowing = await page.evaluate(() => window.__store.getState().following);
+  check(
+    "a jittery click while following does not cancel follow (regression)",
+    stillFollowing === true,
+    `following=${stillFollowing}`,
+  );
+} else {
+  check(
+    "a jittery click while following does not cancel follow (regression)",
+    false,
+    "followed train off-screen, click not exercised",
+  );
+}
+
 await page.evaluate(() => window.__store.getState().setFollowing(false));
 await new Promise((r) => setTimeout(r, 500));
 const c2 = await page.evaluate(() => window.__map.getCenter());

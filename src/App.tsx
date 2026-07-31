@@ -32,8 +32,10 @@ export default function App() {
       </div>
       <TrainInspector />
       <StationBoard />
-      <TimeScrubber />
-      <TimeControls />
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 flex flex-col items-center gap-2">
+        <TimeScrubber />
+        <TimeControls />
+      </div>
     </div>
   );
 }

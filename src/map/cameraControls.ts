@@ -5,7 +5,7 @@ import type { Map as MapLibreMap } from "maplibre-gl";
  *
  * | gesture                                                   | effect       |
  * |-----------------------------------------------------------|--------------|
- * | left-drag                                                 | pan (MapLibre's dragPan, untouched)     |
+ * | left-drag                                                 | pan (MapLibre's dragPan, untouched here — though `MapContainer.tsx` widens the map's click tolerance to 6px, which also raises dragPan's own click-vs-drag threshold) |
  * | wheel scroll                                              | zoom (MapLibre's scrollZoom, untouched) |
  * | middle-drag (press the wheel), right-drag, ctrl+left-drag | orbit — vertical pitches, horizontal turns, applied together |
  *
