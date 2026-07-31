@@ -1,46 +1,53 @@
 {
-  "bytes": 390617,
+  "bytes": 388874,
   "feed_version": "20260730",
-  "gzip_bytes": 221695,
+  "gzip_bytes": 221616,
   "interchanges": [
     {
-      "a": "sukhumvit/BTS Samrong",
-      "b": "yellow/MRT Samrong"
+      "a": "sukhumvit/Samrong",
+      "b": "yellow/Samrong"
     },
     {
-      "a": "sukhumvit/BTS Siam",
-      "b": "silom/BTS Siam"
+      "a": "sukhumvit/Siam",
+      "b": "silom/Siam"
     },
     {
-      "a": "sukhumvit/BTS Phaya Thai",
-      "b": "arl/ARL Phaya Thai"
+      "a": "sukhumvit/Phaya Thai",
+      "b": "arl/Phaya Thai"
     },
     {
-      "a": "sukhumvit/BTS Wat Phrasri Mahathat",
-      "b": "pink/MRT"
+      "a": "sukhumvit/Wat Phra Sri Mahathat",
+      "b": "pink/Wat Phra Sri Mahathat"
     },
     {
-      "a": "silom/BTS Krung Thon Buri",
-      "b": "gold/BTS Khrung Thon Buri"
+      "a": "silom/Krung Thon Buri",
+      "b": "gold/Krung Thon Buri"
     },
     {
-      "a": "purple/MRT Nonthaburi Civic Center",
+      "a": "purple/Nonthaburi Civic Center",
       "b": "pink/MRT Nonthaburi Civic Center"
     },
     {
-      "a": "purple/MRT Bang Son",
-      "b": "red-light/SRT Bang Son [Light Red Line]"
+      "a": "purple/Bang Son",
+      "b": "red-light/Bang Son"
     },
     {
-      "a": "pink/MRT Kak Si",
-      "b": "red-dark/SRT Lak Si (Dark Red Line)"
+      "a": "pink/Lak Si",
+      "b": "red-dark/Lak Si"
     },
     {
-      "a": "red-dark/SRT Krung Thep Aphiwat Central Terminal Station [Red Line]",
-      "b": "red-light/SRT Krung Thep Aphiwat Central Terminal Station [Red Line]"
+      "a": "red-dark/Krung Thep Aphiwat",
+      "b": "red-light/Krung Thep Aphiwat"
     }
   ],
-  "max_snap_m": 554.7298250815825,
+  "large_snap_exceptions": [
+    {
+      "gtfs_stop_id": "359",
+      "route_id": "2436",
+      "snap_m": 554.7298250815825
+    }
+  ],
+  "max_snap_m": 63.92498328970017,
   "patterns": 34,
   "peak_concurrent": 172,
   "peak_concurrent_date": 20260722,

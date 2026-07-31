@@ -26,6 +26,11 @@ use sim_core::SimWorld;
 
 const RESAMPLE_SPACING_M: f64 = 10.0;
 const MAX_SNAP_M: f64 = 150.0;
+/// Even a disclosed `allow_large_snap_stop_ids` exception has a ceiling —
+/// it's meant for known, verified cases like the Pink terminus/interchange
+/// coordinate quirk (555 m), not an unbounded escape hatch. A future
+/// exception past this is almost certainly a real mistake, not a known one.
+const ALLOW_LARGE_SNAP_CEILING_M: f64 = 1_000.0;
 
 /// Weekday/weekend sample dates for the peak-concurrent scan, inside the
 /// Namtang feed's 20260101-20261231 validity window (contract §0). Ordinary
@@ -232,7 +237,12 @@ fn run() -> Result<(), String> {
     let proj = EnuProjector::new(ORIGIN_LNG_LAT.0, ORIGIN_LNG_LAT.1);
     let mut routes: Vec<RouteDoc> = Vec::new();
     let mut station_maps: Vec<HashMap<String, u16>> = Vec::new(); // stop_id -> station_idx
+    // Tracked separately from large_snap_exceptions below so a disclosed,
+    // known exception (e.g. the Pink terminus's 555 m coordinate quirk)
+    // doesn't hide a genuinely-bad snap on some other, future line — an
+    // undisclosed regression would still show up here.
     let mut max_snap_m = 0.0f64;
+    let mut large_snap_exceptions: Vec<serde_json::Value> = Vec::new();
 
     for line in &track_file.lines {
         let ctrl: Vec<[f64; 3]> = line
@@ -281,17 +291,31 @@ fn run() -> Result<(), String> {
                             "stop {stop_id} snaps {snap_d:.1} m from route {route_id} track (limit {MAX_SNAP_M} m)"
                         ));
                     }
+                    if large_snap_allowed && snap_d > ALLOW_LARGE_SNAP_CEILING_M {
+                        return Err(format!(
+                            "stop {stop_id} snaps {snap_d:.1} m from route {route_id} track — \
+                             past the {ALLOW_LARGE_SNAP_CEILING_M} m allow_large_snap_stop_ids \
+                             ceiling; this is too far to be the known exception, check the id"
+                        ));
+                    }
                     if large_snap_allowed {
                         eprintln!(
                             "warning: stop {stop_id} snaps {snap_d:.1} m from route {route_id} track — allowed (allow_large_snap_stop_ids)"
                         );
+                        large_snap_exceptions.push(serde_json::json!({
+                            "route_id": route_id,
+                            "gtfs_stop_id": stop_id,
+                            "snap_m": snap_d,
+                        }));
                     } else if snap_d > 40.0 {
                         eprintln!(
                             "warning: stop {stop_id} ({}) is {snap_d:.1} m from route {route_id} track",
                             row.name
                         );
                     }
-                    max_snap_m = max_snap_m.max(snap_d);
+                    if !large_snap_allowed {
+                        max_snap_m = max_snap_m.max(snap_d);
+                    }
                     // OSM candidates only win if they actually carry a name:
                     // route-relation `role=stop` members are usually bare
                     // stop_position nodes with no name tag at all (the name
@@ -631,7 +655,12 @@ fn run() -> Result<(), String> {
         "interchanges": interchanges,
         "bytes": bytes.len(),
         "gzip_bytes": gzip_bytes,
+        // Excludes any allow_large_snap_stop_ids exceptions (reported
+        // separately below) so a disclosed, known offset like Pink's 555 m
+        // terminus/interchange quirk can't hide a genuinely-bad snap
+        // elsewhere behind an already-large "normal" baseline.
         "max_snap_m": max_snap_m,
+        "large_snap_exceptions": large_snap_exceptions,
         "per_route": per_route,
         // Highest simultaneous vehicle count over a sampled service day —
         // answers "is MAX_VEHICLES big enough" with data, not a guess

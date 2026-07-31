@@ -121,25 +121,48 @@ async function fetchBranch(relationId, branchKey, altitudeM) {
   );
   const path = dedupe(stitchWays(trackWays));
 
-  const stations = rel.members
-    .filter((m) => m.type === "node" && /^stop/.test(m.role) && m.lat != null)
+  // Candidate stop/platform node members: PTv2 route relations mark these
+  // either with an explicit role starting "stop"/"platform", OR with an
+  // empty role and a public_transport=stop_position/station/platform tag
+  // instead (confirmed live: relation 2067854 "Silom" has 14 node members,
+  // only 3 with role=stop — the other 11 are role="" but are real, named
+  // railway=station nodes; filtering on role alone silently dropped them).
+  // Tags aren't present on member nodes in this `out geom` response
+  // (verified live), so cast a wide net here on role + lat/lon, and let the
+  // tag-based check below (after the second query) do the real filtering.
+  const candidates = rel.members
+    .filter((m) => m.type === "node" && m.lat != null)
     // Stringify: Overpass returns node refs as JSON numbers, but the Rust
     // preprocessor's NetworkStation.id is a String (it's compared against
     // GTFS stop_id strings for the code/name lookup) — a bare number here
     // fails deserialization with "invalid type: integer, expected a string".
-    .map((m) => ({ id: String(m.ref), lon: m.lon, lat: m.lat }));
+    .map((m) => ({ id: String(m.ref), role: m.role, lon: m.lon, lat: m.lat }));
 
-  // stop_position nodes carry no tags via `out geom` members — fetch names.
-  const ids = stations.map((s) => s.id).join(",");
+  // stop_position/station nodes carry no tags via `out geom` members —
+  // fetch tags for every candidate in one follow-up query, then filter.
+  const ids = candidates.map((s) => s.id).join(",");
+  let byId = new Map();
   if (ids.length > 0) {
     const nodeData = await overpass(`[out:json][timeout:60];node(id:${ids});out;`);
-    const byId = new Map(nodeData.elements.map((e) => [e.id, e.tags ?? {}]));
-    for (const s of stations) {
-      const tags = byId.get(s.id) ?? {};
-      s.name = tags["name:en"] ?? tags.name ?? "";
-      s.nameTh = tags["name:th"] ?? tags.name ?? "";
-      s.code = tags.ref ?? "";
-    }
+    // Key on String(e.id): Overpass returns numeric ids here too, and a
+    // number-vs-string key mismatch against candidates' string ids would
+    // make every lookup miss silently (byId.get() found nothing, so every
+    // station fell back to "" name/code — this broke ALL 155 stations'
+    // OSM-sourced names/codes network-wide before this fix).
+    byId = new Map(nodeData.elements.map((e) => [String(e.id), e.tags ?? {}]));
+  }
+
+  const STOP_LIKE = new Set(["stop_position", "station", "platform"]);
+  const stations = candidates.filter((s) => {
+    if (/^stop/.test(s.role)) return true;
+    const pt = byId.get(s.id)?.public_transport;
+    return typeof pt === "string" && STOP_LIKE.has(pt);
+  });
+  for (const s of stations) {
+    const tags = byId.get(s.id) ?? {};
+    s.name = tags["name:en"] ?? tags.name ?? "";
+    s.nameTh = tags["name:th"] ?? tags.name ?? "";
+    s.code = tags.ref ?? "";
   }
 
   console.log(

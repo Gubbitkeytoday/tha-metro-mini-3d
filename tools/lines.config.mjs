@@ -181,5 +181,12 @@ export function assertRegistryValid(lines = LINES) {
       throw new Error(`${l.key}: unknown vehicleType '${l.vehicleType}'`);
     }
     if (!HEX.test(l.color)) throw new Error(`${l.key}: color must be #RRGGBB`);
+    for (const field of ["excludeGtfsStopIds", "allowLargeSnapStopIds"]) {
+      const v = l[field];
+      if (v === undefined) continue;
+      if (!Array.isArray(v) || !v.every((id) => typeof id === "string" && id.length > 0)) {
+        throw new Error(`${l.key}: ${field} must be an array of non-empty strings`);
+      }
+    }
   }
 }
