@@ -11,7 +11,7 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "data:fetch": "node tools/fetch-green-line.mjs",
+    "data:fetch": "node tools/fetch-network.mjs",
     "data:stations": "node tools/extract-stations.mjs",
     "data:preprocess": "cargo run --manifest-path rust-engine/Cargo.toml -p preprocessor --release -- --track src/data/green-line.json --out public/data/green-line.tmb --report public/data/green-line.report.json",
     "wasm:build": "wasm-pack build rust-engine/wasm --release --target web --out-dir ../../src/sim/pkg",

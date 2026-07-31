@@ -1,23 +1,26 @@
 #!/usr/bin/env node
 /**
- * Fetch BTS Green Line (Sukhumvit + Silom branches) track geometry and
- * stations from OpenStreetMap via the Overpass API, and emit a compact
- * JSON asset consumed by the frontend (src/data/green-line.json).
+ * Fetch every registry line's track geometry + stations from OpenStreetMap via
+ * the Overpass API into src/data/network.json.
  *
- * Data © OpenStreetMap contributors, ODbL 1.0 — attribution is rendered
- * in the app's map attribution control.
+ * Data © OpenStreetMap contributors, ODbL 1.0 — attribution is rendered in the
+ * app's map attribution control.
  *
- * Usage: node tools/fetch-green-line.mjs
+ * Usage: node tools/fetch-network.mjs [lineKey ...]   (default: all lines)
+ *
+ * A line with `osm.relationId: null` is DISCOVERED by `osm.match` against
+ * relation names in the Bangkok bbox; the resolved id is printed so it can be
+ * pinned back into tools/lines.config.mjs. Discovery is for bootstrapping a new
+ * line only — committed data must come from a pinned id, or the geometry
+ * silently changes when OSM does.
  */
 
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertRegistryValid, LINES, STRUCTURE_ALTITUDE_M } from "./lines.config.mjs";
 
-const OUT_PATH = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../src/data/green-line.json",
-);
+const OUT_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../src/data/network.json");
 
 const MIRRORS = [
   "https://overpass-api.de/api/interpreter",
@@ -25,9 +28,6 @@ const MIRRORS = [
   "https://overpass.private.coffee/api/interpreter",
   "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ];
-
-// Elevated BTS viaduct: SRS §F1.3 specifies +12–22 m. Nominal deck height.
-const ELEVATED_ALTITUDE_M = 15;
 
 async function overpass(query) {
   let lastError;
@@ -91,7 +91,7 @@ function dedupe(coords) {
   );
 }
 
-async function fetchBranch(relationId, branchKey) {
+async function fetchBranch(relationId, branchKey, altitudeM) {
   const data = await overpass(`[out:json][timeout:90];relation(${relationId});out geom;`);
   const rel = data.elements.find((e) => e.type === "relation");
   if (!rel) throw new Error(`Relation ${relationId} not found`);
@@ -126,61 +126,70 @@ async function fetchBranch(relationId, branchKey) {
     relationId,
     osmName: rel.tags?.name ?? "",
     // [lon, lat, altitude_m] per SRS §F1.3
-    track: path.map(([lon, lat]) => [lon, lat, ELEVATED_ALTITUDE_M]),
+    track: path.map(([lon, lat]) => [lon, lat, altitudeM]),
     stations: stations.map((s) => ({
       id: s.id,
       name: s.name ?? "",
       nameTh: s.nameTh ?? "",
       code: s.code ?? "",
-      position: [s.lon, s.lat, ELEVATED_ALTITUDE_M],
+      position: [s.lon, s.lat, altitudeM],
     })),
   };
 }
 
-async function main() {
-  // Discover one route relation (single direction) per branch. `name` tags
-  // are Thai — match the English name. Exclude short-turn supplementary routes.
-  const discovery = await overpass(
+/** Resolve a relation id from `osm.match` when none is pinned. */
+async function discoverRelationId(line) {
+  const data = await overpass(
     `[out:json][timeout:60];
-     relation["route"~"train|light_rail|subway"]["name:en"~"Sukhumvit|Silom"](13.5,100.3,14.1,100.8);
+     relation["route"~"train|light_rail|subway|monorail"](13.4,100.2,14.3,101.0);
      out tags;`,
   );
-  const candidates = discovery.elements.filter(
-    (e) => e.tags?.type === "route" && !/supplementary/i.test(e.tags["name:en"] ?? ""),
+  const candidates = data.elements.filter(
+    (e) =>
+      e.tags?.type === "route" &&
+      line.osm.match.test(`${e.tags["name:en"] ?? ""} ${e.tags.name ?? ""}`) &&
+      !/supplementary/i.test(e.tags["name:en"] ?? ""),
   );
-  console.log("Route relation candidates:");
-  for (const c of candidates) {
-    console.log(`  ${c.id} | ${c.tags["name:en"] ?? c.tags.name}`);
+  console.log(`${line.key}: ${candidates.length} candidate relation(s)`);
+  for (const c of candidates) console.log(`  ${c.id} | ${c.tags["name:en"] ?? c.tags.name}`);
+  if (candidates.length === 0) throw new Error(`${line.key}: no relation matched ${line.osm.match}`);
+  // Route relations come in directional pairs — either variant's track is fine.
+  console.log(`  -> pin osm.relationId: ${candidates[0].id} in tools/lines.config.mjs`);
+  return candidates[0].id;
+}
+
+async function main() {
+  assertRegistryValid();
+  const only = process.argv.slice(2);
+  const selected = only.length > 0 ? LINES.filter((l) => only.includes(l.key)) : LINES;
+  if (selected.length === 0) throw new Error(`no registry line matches ${only.join(", ")}`);
+
+  const lines = [];
+  for (const line of LINES) {
+    if (!selected.includes(line)) continue;
+    const relationId = line.osm.relationId ?? (await discoverRelationId(line));
+    const alt = STRUCTURE_ALTITUDE_M[line.structure];
+    const geom = await fetchBranch(relationId, line.key, alt);
+    lines.push({
+      key: line.key,
+      name: line.name,
+      nameTh: line.nameTh,
+      color: line.color,
+      structure: line.structure,
+      vehicleType: line.vehicleType,
+      gtfsRouteId: line.gtfsRouteId,
+      ...geom,
+    });
   }
-
-  const pick = (re) => {
-    const matches = candidates.filter((c) => re.test(c.tags["name:en"] ?? ""));
-    if (matches.length === 0) throw new Error(`No relation matching ${re}`);
-    // Route relations come in directional pairs — either variant's track is fine.
-    return matches[0];
-  };
-
-  const sukhumvitRel = pick(/sukhumvit/i);
-  const silomRel = pick(/silom/i);
-
-  const [sukhumvit, silom] = [
-    await fetchBranch(sukhumvitRel.id, "sukhumvit"),
-    await fetchBranch(silomRel.id, "silom"),
-  ];
 
   const out = {
     generated: new Date().toISOString(),
     source: "OpenStreetMap via Overpass API — © OpenStreetMap contributors, ODbL 1.0",
-    line: "BTS Green Line",
-    branches: {
-      sukhumvit: { name: "Sukhumvit Line", color: "#7CB342", ...sukhumvit },
-      silom: { name: "Silom Line", color: "#00877C", ...silom },
-    },
+    lines,
   };
-
   await mkdir(dirname(OUT_PATH), { recursive: true });
   await writeFile(OUT_PATH, JSON.stringify(out));
-  console.log(`Wrote ${OUT_PATH}`);
+  console.log(`Wrote ${OUT_PATH} (${lines.length} lines)`);
 }
 
 main().catch((err) => {
