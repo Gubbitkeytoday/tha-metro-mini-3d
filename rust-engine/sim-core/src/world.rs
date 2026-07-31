@@ -296,9 +296,9 @@ pub(crate) mod tests_support {
             ],
             track_arc_m: vec![0.0, 100.0, 200.0],
             stations: vec![
-                StationDoc { gtfs_stop_id: "A".into(), code: "".into(), name_en: "A".into(), name_th: "".into(), arc_m: 0.0 },
-                StationDoc { gtfs_stop_id: "B".into(), code: "".into(), name_en: "B".into(), name_th: "".into(), arc_m: 100.0 },
-                StationDoc { gtfs_stop_id: "C".into(), code: "".into(), name_en: "C".into(), name_th: "".into(), arc_m: 200.0 },
+                StationDoc { gtfs_stop_id: "A".into(), code: "".into(), name_en: "A".into(), name_th: "".into(), arc_m: 0.0, interchanges: Vec::new() },
+                StationDoc { gtfs_stop_id: "B".into(), code: "".into(), name_en: "B".into(), name_th: "".into(), arc_m: 100.0, interchanges: Vec::new() },
+                StationDoc { gtfs_stop_id: "C".into(), code: "".into(), name_en: "C".into(), name_th: "".into(), arc_m: 200.0, interchanges: Vec::new() },
             ],
         };
         // Pattern 0 (direction 0, increasing arc): A(0,30) -> B(100,130) -> C(200,200)

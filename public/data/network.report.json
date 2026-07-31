@@ -1,7 +1,13 @@
 {
-  "bytes": 123009,
+  "bytes": 123074,
   "feed_version": "20260730",
-  "gzip_bytes": 70771,
+  "gzip_bytes": 70792,
+  "interchanges": [
+    {
+      "a": "sukhumvit/BTS Siam",
+      "b": "silom/BTS Siam"
+    }
+  ],
   "max_snap_m": 63.92498328970017,
   "patterns": 14,
   "per_route": [

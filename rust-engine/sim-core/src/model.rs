@@ -49,6 +49,15 @@ pub struct StationDoc {
     pub name_th: String,
     /// Station snapped ONTO the track polyline: arc-length position in meters.
     pub arc_m: f32,
+    /// Other routes' stations within walking distance. Symmetric, never
+    /// self-referential, computed by the preprocessor (contract §2).
+    pub interchanges: Vec<InterchangeRef>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct InterchangeRef {
+    pub route_idx: u8,
+    pub station_idx: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

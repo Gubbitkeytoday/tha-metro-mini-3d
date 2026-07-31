@@ -42,6 +42,13 @@ export const LINES = [
   },
 ];
 
+/**
+ * Interchanges the 300 m radius cannot see — long paid/unpaid walkways.
+ * Entries are GTFS stop_id pairs; fill these in against real data once the
+ * full network is in the cache (Task 11), not from memory.
+ */
+export const INTERCHANGE_OVERRIDES = [];
+
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
 /** Throws on any registry mistake that would corrupt the index invariant. */

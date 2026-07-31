@@ -18,7 +18,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertRegistryValid, LINES, STRUCTURE_ALTITUDE_M } from "./lines.config.mjs";
+import { assertRegistryValid, INTERCHANGE_OVERRIDES, LINES, STRUCTURE_ALTITUDE_M } from "./lines.config.mjs";
 
 const OUT_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../src/data/network.json");
 
@@ -186,6 +186,7 @@ async function main() {
     generated: new Date().toISOString(),
     source: "OpenStreetMap via Overpass API — © OpenStreetMap contributors, ODbL 1.0",
     lines,
+    interchangeOverrides: INTERCHANGE_OVERRIDES,
   };
   await mkdir(dirname(OUT_PATH), { recursive: true });
   await writeFile(OUT_PATH, JSON.stringify(out));

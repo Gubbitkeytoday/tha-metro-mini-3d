@@ -28,8 +28,12 @@ const RESAMPLE_SPACING_M: f64 = 10.0;
 const MAX_SNAP_M: f64 = 150.0;
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TrackFile {
     lines: Vec<LineGeometry>,
+    /// GTFS stop_id pairs for walkways the 300 m radius cannot reach.
+    #[serde(default)]
+    interchange_overrides: Vec<[String; 2]>,
 }
 
 #[derive(Deserialize)]
@@ -242,7 +246,14 @@ fn run() -> Result<(), String> {
                     snapped.push((
                         stop_id.clone(),
                         snap_d,
-                        StationDoc { gtfs_stop_id: stop_id.clone(), code, name_en, name_th, arc_m: arc_m as f32 },
+                        StationDoc {
+                            gtfs_stop_id: stop_id.clone(),
+                            code,
+                            name_en,
+                            name_th,
+                            arc_m: arc_m as f32,
+                            interchanges: Vec::new(),
+                        },
                     ));
                 }
             }
@@ -270,6 +281,7 @@ fn run() -> Result<(), String> {
                             name_en: s.name.clone(),
                             name_th: s.name_th.clone(),
                             arc_m: arc_m as f32,
+                            interchanges: Vec::new(),
                         },
                     ));
                 }
@@ -310,6 +322,13 @@ fn run() -> Result<(), String> {
         });
         station_maps.push(map);
     }
+
+    let interchange_overrides: Vec<(String, String)> = track_file
+        .interchange_overrides
+        .iter()
+        .map(|[a, b]| (a.clone(), b.clone()))
+        .collect();
+    link_interchanges(&mut routes, INTERCHANGE_RADIUS_M, &interchange_overrides);
 
     // ---- Services ----------------------------------------------------------
     let mut service_id_list: Vec<String> = service_ids.iter().cloned().collect();
@@ -473,12 +492,36 @@ fn run() -> Result<(), String> {
             })
         })
         .collect();
+    // One entry per undirected link (route_idx ordering dedupes the symmetric pair).
+    let interchanges: Vec<serde_json::Value> = world
+        .doc()
+        .routes
+        .iter()
+        .enumerate()
+        .flat_map(|(ri, r)| {
+            r.stations.iter().enumerate().flat_map(move |(si, st)| {
+                st.interchanges
+                    .iter()
+                    .filter(move |link| (ri, si) < (link.route_idx as usize, link.station_idx as usize))
+                    .map(move |link| (ri, si, link))
+            })
+        })
+        .map(|(ri, si, link)| {
+            let a = &world.doc().routes[ri];
+            let b = &world.doc().routes[link.route_idx as usize];
+            serde_json::json!({
+                "a": format!("{}/{}", a.line_key, a.stations[si].name_en),
+                "b": format!("{}/{}", b.line_key, b.stations[link.station_idx as usize].name_en),
+            })
+        })
+        .collect();
     let report = serde_json::json!({
         "feed_version": v.feed_version,
         "stations": v.stations,
         "patterns": v.patterns,
         "runs": v.runs,
         "services": v.services,
+        "interchanges": interchanges,
         "bytes": bytes.len(),
         "gzip_bytes": gzip_bytes,
         "max_snap_m": max_snap_m,
@@ -495,6 +538,53 @@ fn run() -> Result<(), String> {
     println!("{report_str}");
     Ok(())
 }
+
+/// Cross-route walking connections, from station ENU distance plus a manual
+/// override list for long walkways the radius cannot reach.
+///
+/// GTFS `parent_station` cannot do this job: interchanges here span operators
+/// (BTS/BEM/SRT) that publish independent feeds and never share a parent.
+/// Distance-clustering with a manual escape hatch is the pragmatic substitute.
+fn link_interchanges(routes: &mut [RouteDoc], radius_m: f64, overrides: &[(String, String)]) {
+    // (route_idx, station_idx, x, y, stop_id)
+    let mut pts: Vec<(usize, usize, f32, f32, String)> = Vec::new();
+    for (ri, route) in routes.iter().enumerate() {
+        for (si, st) in route.stations.iter().enumerate() {
+            let [x, y, _z] = sim_core::world::position_at_arc(route, st.arc_m);
+            pts.push((ri, si, x, y, st.gtfs_stop_id.clone()));
+        }
+    }
+
+    let r2 = (radius_m * radius_m) as f32;
+    let mut links: Vec<(usize, usize, usize, usize)> = Vec::new();
+    for i in 0..pts.len() {
+        for j in (i + 1)..pts.len() {
+            let (ri, si, xi, yi, idi) = (&pts[i].0, &pts[i].1, pts[i].2, pts[i].3, &pts[i].4);
+            let (rj, sj, xj, yj, idj) = (&pts[j].0, &pts[j].1, pts[j].2, pts[j].3, &pts[j].4);
+            if ri == rj {
+                continue; // same line: adjacent stations are not an interchange
+            }
+            let near = (xi - xj).powi(2) + (yi - yj).powi(2) <= r2;
+            let forced = overrides
+                .iter()
+                .any(|(a, b)| (a == idi && b == idj) || (a == idj && b == idi));
+            if near || forced {
+                links.push((*ri, *si, *rj, *sj));
+            }
+        }
+    }
+
+    for (ri, si, rj, sj) in links {
+        routes[ri].stations[si]
+            .interchanges
+            .push(InterchangeRef { route_idx: rj as u8, station_idx: sj as u16 });
+        routes[rj].stations[sj]
+            .interchanges
+            .push(InterchangeRef { route_idx: ri as u8, station_idx: si as u16 });
+    }
+}
+
+const INTERCHANGE_RADIUS_M: f64 = 300.0;
 
 /// Runs for one pattern, from `frequencies.txt` when the trip has rows there,
 /// otherwise from the trip's own absolute `stop_times`.
@@ -595,5 +685,64 @@ mod tests {
         let runs = runs_for_pattern("t3", &freqs, 99_999, 0, 0);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].start_sec, 36_000);
+    }
+
+    fn route_with_stations(key: &str, stations: &[(&str, f32)]) -> RouteDoc {
+        RouteDoc {
+            gtfs_route_id: key.into(),
+            line_key: key.into(),
+            simulated: true,
+            name_en: key.into(),
+            color_rgb: 0,
+            // Straight east-west track so arc_m == x metres.
+            track_xyz: vec![[0.0, 0.0, 15.0], [5000.0, 0.0, 15.0]],
+            track_arc_m: vec![0.0, 5000.0],
+            stations: stations
+                .iter()
+                .map(|(id, arc)| StationDoc {
+                    gtfs_stop_id: (*id).into(),
+                    code: (*id).into(),
+                    name_en: (*id).into(),
+                    name_th: (*id).into(),
+                    arc_m: *arc,
+                    interchanges: Vec::new(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn links_stations_that_are_physically_close_across_routes() {
+        let mut routes = vec![
+            route_with_stations("a", &[("a1", 0.0), ("a2", 1000.0)]),
+            route_with_stations("b", &[("b1", 1050.0)]),
+        ];
+        link_interchanges(&mut routes, 300.0, &[]);
+        assert_eq!(routes[0].stations[1].interchanges.len(), 1, "a2 <-> b1 is 50 m");
+        assert_eq!(routes[0].stations[1].interchanges[0].route_idx, 1);
+        assert!(routes[1].stations[0].interchanges.iter().any(|i| i.route_idx == 0),
+                "the link must be symmetric");
+        assert!(routes[0].stations[0].interchanges.is_empty(), "a1 is 1050 m away");
+    }
+
+    #[test]
+    fn never_links_two_stations_on_the_same_route() {
+        // Sukhumvit and Silom cross at Siam with stations metres apart; a
+        // self-link would make the inspector advertise a transfer to itself.
+        let mut routes = vec![route_with_stations("a", &[("a1", 0.0), ("a2", 20.0)])];
+        link_interchanges(&mut routes, 300.0, &[]);
+        assert!(routes[0].stations.iter().all(|s| s.interchanges.is_empty()));
+    }
+
+    #[test]
+    fn honours_a_manual_override_beyond_the_radius() {
+        // Asok <-> Sukhumvit is a ~200 m walkway; Phaya Thai <-> ARL is longer.
+        let mut routes = vec![
+            route_with_stations("a", &[("a1", 0.0)]),
+            route_with_stations("b", &[("b1", 2000.0)]),
+        ];
+        link_interchanges(&mut routes, 100.0, &[("a1".into(), "b1".into())]);
+        assert_eq!(routes[0].stations[0].interchanges.len(), 1);
+        assert_eq!(routes[1].stations[0].interchanges.len(), 1);
     }
 }

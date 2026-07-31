@@ -89,6 +89,12 @@ export interface StationBoard {
   entries: BoardEntry[];
 }
 
+/** A walking connection to another route's station (contract §7). */
+export interface InterchangeRef {
+  route_idx: number;
+  station_idx: number;
+}
+
 /** Station with its ENU position, for click hit-testing. */
 export interface StationInfo {
   route_idx: number;
@@ -100,6 +106,7 @@ export interface StationInfo {
   x: number;
   y: number;
   z: number;
+  interchanges: InterchangeRef[];
 }
 
 /** Query request payloads (main -> worker). */

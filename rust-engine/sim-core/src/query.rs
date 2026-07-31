@@ -11,7 +11,7 @@
 use serde::Serialize;
 
 use crate::calendar::{previous_date, service_active_on};
-use crate::model::{PatternDoc, RouteDoc};
+use crate::model::{InterchangeRef, PatternDoc, RouteDoc};
 use crate::world::{SimWorld, STATE_DWELL, STATE_TRANSIT};
 
 /// One scheduled call, in seconds since the run's own service-day midnight.
@@ -95,6 +95,7 @@ pub struct StationInfo {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+    pub interchanges: Vec<InterchangeRef>,
 }
 
 /// Which service-day frame a run falls in for a given local date/time.
@@ -338,6 +339,7 @@ impl SimWorld {
                     x,
                     y,
                     z,
+                    interchanges: st.interchanges.clone(),
                 });
             }
         }
@@ -373,6 +375,7 @@ mod tests {
                 name_en: "Orange One".into(),
                 name_th: "ส้ม 1".into(),
                 arc_m: 0.0,
+                interchanges: Vec::new(),
             }],
         });
         SimWorld::from_doc(doc).unwrap()
