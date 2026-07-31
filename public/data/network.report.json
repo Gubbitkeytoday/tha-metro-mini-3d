@@ -10,6 +10,19 @@
   ],
   "max_snap_m": 63.92498328970017,
   "patterns": 14,
+  "peak_concurrent": 100,
+  "peak_concurrent_date": 20260722,
+  "peak_concurrent_time": 27960,
+  "peak_concurrent_weekday": {
+    "date": 20260722,
+    "peak": 100,
+    "time": 27960
+  },
+  "peak_concurrent_weekend": {
+    "date": 20260725,
+    "peak": 57,
+    "time": 75600
+  },
   "per_route": [
     {
       "gtfs_route_id": "1",

@@ -5,7 +5,9 @@
 
 /** f32 lanes per vehicle record. */
 export const VEHICLE_STRIDE = 8;
-export const MAX_VEHICLES = 512;
+/** Must mirror `MAX_VEHICLES` in rust-engine/sim-core/src/world.rs (source of
+ * truth) — they size the transferable frame buffer together (FRAME_BYTES). */
+export const MAX_VEHICLES = 1024;
 
 /** Floats / bytes per frame buffer. */
 export const FRAME_FLOATS = MAX_VEHICLES * VEHICLE_STRIDE;

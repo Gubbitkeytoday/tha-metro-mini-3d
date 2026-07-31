@@ -27,6 +27,12 @@ use sim_core::SimWorld;
 const RESAMPLE_SPACING_M: f64 = 10.0;
 const MAX_SNAP_M: f64 = 150.0;
 
+/// Weekday/weekend sample dates for the peak-concurrent scan, inside the
+/// Namtang feed's 20260101-20261231 validity window (contract §0). Ordinary
+/// (non-holiday) dates already exercised by the sim-core test fixtures.
+const PEAK_SAMPLE_WEEKDAY: u32 = 20_260_722; // Wednesday
+const PEAK_SAMPLE_WEEKEND: u32 = 20_260_725; // Saturday
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TrackFile {
@@ -515,6 +521,15 @@ fn run() -> Result<(), String> {
             })
         })
         .collect();
+    let (weekday_peak, weekday_peak_sec) = peak_concurrent(&world, PEAK_SAMPLE_WEEKDAY);
+    let (weekend_peak, weekend_peak_sec) = peak_concurrent(&world, PEAK_SAMPLE_WEEKEND);
+    let (peak_concurrent_count, peak_concurrent_time, peak_concurrent_date) =
+        if weekday_peak >= weekend_peak {
+            (weekday_peak, weekday_peak_sec, PEAK_SAMPLE_WEEKDAY)
+        } else {
+            (weekend_peak, weekend_peak_sec, PEAK_SAMPLE_WEEKEND)
+        };
+
     let report = serde_json::json!({
         "feed_version": v.feed_version,
         "stations": v.stations,
@@ -526,6 +541,16 @@ fn run() -> Result<(), String> {
         "gzip_bytes": gzip_bytes,
         "max_snap_m": max_snap_m,
         "per_route": per_route,
+        // Highest simultaneous vehicle count over a sampled service day —
+        // answers "is MAX_VEHICLES big enough" with data, not a guess
+        // (contract §3/§8). The overall max of a weekday and a weekend scan;
+        // both are reported separately too so a future weekend-only spike
+        // isn't hidden by taking just the bigger number's weekday assumption.
+        "peak_concurrent": peak_concurrent_count,
+        "peak_concurrent_time": peak_concurrent_time,
+        "peak_concurrent_date": peak_concurrent_date,
+        "peak_concurrent_weekday": {"date": PEAK_SAMPLE_WEEKDAY, "peak": weekday_peak, "time": weekday_peak_sec},
+        "peak_concurrent_weekend": {"date": PEAK_SAMPLE_WEEKEND, "peak": weekend_peak, "time": weekend_peak_sec},
     });
     let report_str = serde_json::to_string_pretty(&report).unwrap();
     if let Some(path) = &args.report {
@@ -585,6 +610,22 @@ fn link_interchanges(routes: &mut [RouteDoc], radius_m: f64, overrides: &[(Strin
 }
 
 const INTERCHANGE_RADIUS_M: f64 = 300.0;
+
+/// Highest simultaneous vehicle count over a service day, sampled per minute.
+/// Answers "is MAX_VEHICLES big enough" with data instead of a guess.
+/// Returns (peak count, seconds-of-day the peak occurred at).
+fn peak_concurrent(world: &SimWorld, date_yyyymmdd: u32) -> (usize, u32) {
+    let mut out = vec![0.0f32; sim_core::world::MAX_VEHICLES * sim_core::world::VEHICLE_STRIDE];
+    let mut best = (0usize, 0u32);
+    for minute in 0..1440u32 {
+        let sec = (minute * 60) as f64;
+        let n = world.evaluate(date_yyyymmdd, sec, &mut out);
+        if n > best.0 {
+            best = (n, minute * 60);
+        }
+    }
+    best
+}
 
 /// Runs for one pattern, from `frequencies.txt` when the trip has rows there,
 /// otherwise from the trip's own absolute `stop_times`.

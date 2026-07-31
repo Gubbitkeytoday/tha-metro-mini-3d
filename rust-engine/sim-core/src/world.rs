@@ -6,7 +6,10 @@ use crate::calendar::{previous_date, service_active_on};
 use crate::model::{CacheDoc, PatternDoc, RouteDoc, TMB_MAGIC, TMB_VERSION};
 
 pub const VEHICLE_STRIDE: usize = 8; // f32 lanes per vehicle
-pub const MAX_VEHICLES: usize = 512;
+/// Frame-buffer capacity. Sized well above SRS NF1's 300-concurrent target so
+/// a network peak is never silently clipped; the cost is buffer memory only
+/// (1024 * 8 * 4 = 32 KB per frame buffer, 3 in the pool).
+pub const MAX_VEHICLES: usize = 1024;
 
 pub const STATE_DWELL: f32 = 0.0;
 pub const STATE_TRANSIT: f32 = 1.0;
@@ -47,6 +50,13 @@ pub struct SimWorld {
     doc: CacheDoc,
     /// Per pattern: relative time of the final arrival (run duration).
     pattern_dur: Vec<f64>,
+    /// True if the last evaluate() hit MAX_VEHICLES and dropped vehicles.
+    /// `evaluate` takes `&self` (it's called from a shared reference on the
+    /// frame path), so recording this needs interior mutability. `Cell` is
+    /// safe here — not `Mutex`/`Atomic` — because SimWorld lives inside a
+    /// single Web Worker and `evaluate` is never called concurrently from
+    /// more than one thread.
+    truncated: std::cell::Cell<bool>,
 }
 
 /// `3p² − 2p³` easing used for inter-station legs (F2.2).
@@ -98,7 +108,7 @@ impl SimWorld {
             .iter()
             .map(|p| p.stops.last().map(|s| s.arrival_s as f64).unwrap_or(0.0))
             .collect();
-        Ok(Self { doc, pattern_dur })
+        Ok(Self { doc, pattern_dur, truncated: std::cell::Cell::new(false) })
     }
 
     pub fn doc(&self) -> &CacheDoc {
@@ -122,6 +132,7 @@ impl SimWorld {
     /// returns the vehicle count.
     pub fn evaluate(&self, date_yyyymmdd: u32, sec_of_day: f64, out: &mut [f32]) -> usize {
         assert!(out.len() >= MAX_VEHICLES * VEHICLE_STRIDE, "out buffer too small");
+        self.truncated.set(false);
         let prev = previous_date(date_yyyymmdd);
         let active_today: Vec<bool> = self
             .doc
@@ -139,6 +150,7 @@ impl SimWorld {
         let mut count = 0usize;
         for (run_idx, run) in self.doc.runs.iter().enumerate() {
             if count >= MAX_VEHICLES {
+                self.truncated.set(true);
                 break;
             }
             let dur = self.pattern_dur[run.pattern_idx as usize];
@@ -158,6 +170,7 @@ impl SimWorld {
                 }
                 if let Some(pose) = eval_pattern(pattern, t) {
                     if count >= MAX_VEHICLES {
+                        self.truncated.set(true);
                         break;
                     }
                     let route = &self.doc.routes[pattern.route_idx as usize];
@@ -181,6 +194,15 @@ impl SimWorld {
             }
         }
         count
+    }
+
+    /// True if the most recent `evaluate()` call hit `MAX_VEHICLES` and
+    /// dropped one or more vehicles (biased toward high run indices — see
+    /// `evaluate`'s run-order iteration). Cheap to poll after every frame;
+    /// callers that care (the worker, the preprocessor's peak scan) can
+    /// surface it instead of the failure silently looking like a data bug.
+    pub fn last_truncated(&self) -> bool {
+        self.truncated.get()
     }
 }
 
@@ -349,11 +371,63 @@ pub(crate) mod tests_support {
             ],
         }
     }
+
+    /// A synthetic world with `n + 1` runs that are all simultaneously active
+    /// (one shared pattern with a very long duration, every run starting at
+    /// t=0) — used to exercise `MAX_VEHICLES` truncation without depending on
+    /// real GTFS data.
+    pub(crate) fn world_with_more_runs_than(n: usize) -> super::SimWorld {
+        let route = RouteDoc {
+            gtfs_route_id: "1".into(),
+            line_key: "test".into(),
+            simulated: true,
+            name_en: "Test".into(),
+            color_rgb: 0x65B724,
+            track_xyz: vec![[0.0, 0.0, 15.0], [1000.0, 0.0, 15.0]],
+            track_arc_m: vec![0.0, 1000.0],
+            stations: vec![
+                StationDoc { gtfs_stop_id: "A".into(), code: "".into(), name_en: "A".into(), name_th: "".into(), arc_m: 0.0, interchanges: Vec::new() },
+                StationDoc { gtfs_stop_id: "B".into(), code: "".into(), name_en: "B".into(), name_th: "".into(), arc_m: 1000.0, interchanges: Vec::new() },
+            ],
+        };
+        let pattern = PatternDoc {
+            gtfs_trip_id: "t".into(),
+            route_idx: 0,
+            direction: 0,
+            headsign_en: "B".into(),
+            stops: vec![
+                PatternStop { station_idx: 0, arrival_s: 0, departure_s: 0, arc_m: 0.0 },
+                PatternStop { station_idx: 1, arrival_s: 100_000, departure_s: 100_000, arc_m: 1000.0 },
+            ],
+        };
+        let service = ServiceDoc {
+            gtfs_service_id: "s".into(),
+            weekday_mask: 0b0111_1111,
+            start_date: 20_200_101,
+            end_date: 20_301_231,
+            added_dates: vec![],
+            removed_dates: vec![],
+        };
+        let runs = (0..=n).map(|_| RunDoc { pattern_idx: 0, service_idx: 0, start_sec: 0 }).collect();
+        let doc = CacheDoc {
+            magic: TMB_MAGIC,
+            version: TMB_VERSION,
+            feed_version: "test".into(),
+            generated_unix: 0,
+            origin_lng: 100.5332,
+            origin_lat: 13.7456,
+            routes: vec![route],
+            services: vec![service],
+            patterns: vec![pattern],
+            runs,
+        };
+        super::SimWorld::from_doc(doc).unwrap()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::tests_support::synthetic_doc;
+    use super::tests_support::{synthetic_doc, world_with_more_runs_than};
     use super::*;
 
     fn world() -> SimWorld {
@@ -500,6 +574,22 @@ mod tests {
         let v = eval(&w, WED, 86_350.0);
         let r = find_run(&v, 2).unwrap();
         assert_eq!(r[4], STATE_DWELL);
+    }
+
+    #[test]
+    fn max_vehicles_has_headroom_over_the_nf1_target() {
+        // SRS NF1 targets 300 concurrent; the buffer must not be the thing
+        // that clips a network peak.
+        assert!(MAX_VEHICLES >= 1024);
+    }
+
+    #[test]
+    fn evaluate_reports_when_it_truncates() {
+        let world = world_with_more_runs_than(MAX_VEHICLES);
+        let mut out = vec![0.0f32; MAX_VEHICLES * VEHICLE_STRIDE];
+        let n = world.evaluate(20_260_731, 43_200.0, &mut out);
+        assert_eq!(n, MAX_VEHICLES);
+        assert!(world.last_truncated(), "a clipped frame must be observable");
     }
 
     #[test]

@@ -183,8 +183,25 @@ cargo run -p preprocessor --release -- \
 - Expands frequencies: for each frequency window of a pattern's trip, runs
   start at `start_time + k*headway_secs` for k=0.. while `< end_time`.
 - Writes `--report` JSON: `{stations, patterns, runs, services, bytes,
-  gzip_bytes, per_route: [...]}` — used by tests and by the client-validation
-  cross-check test.
+  gzip_bytes, per_route: [...], peak_concurrent, peak_concurrent_time,
+  peak_concurrent_date, peak_concurrent_weekday, peak_concurrent_weekend}` —
+  used by tests and by the client-validation cross-check test.
+- **Peak-concurrent scan (MVP 5 Task 8).** Before writing the report, the
+  preprocessor re-evaluates the freshly-built `SimWorld` once per minute
+  (1440 samples) across one weekday and one weekend date inside the feed's
+  validity window, keeping the highest vehicle count `evaluate()` returns and
+  the `sec_of_day` it occurred at. `peak_concurrent`/`peak_concurrent_time`/
+  `peak_concurrent_date` report the larger of the two scans;
+  `peak_concurrent_weekday`/`peak_concurrent_weekend` report both individually
+  (`{date, peak, time}`) so a weekend-specific spike isn't hidden by a bigger
+  weekday number. This answers "is MAX_VEHICLES big enough" from real data
+  rather than a guess — for the Green Line alone (2 routes) the observed peak
+  is 100 concurrent vehicles (weekday, 07:46), well under both MAX_VEHICLES
+  and the SRS NF1 300-concurrent target; the 1024 ceiling is headroom for the
+  full ~9-line network Task 11 adds, not sized off this number. 1440 extra
+  `evaluate()` calls per scan run in-process against the buffer the
+  preprocessor already allocated for its own self-check, adding a fraction of
+  a second to preprocessing — negligible next to GTFS parsing/IO.
 - MUST fail loudly (non-zero exit + message) on: missing required files,
   empty expansion, snap distance > 150 m, unknown stop ids, no simulated
   lines in `network.json`.
@@ -195,7 +212,7 @@ cargo run -p preprocessor --release -- \
 pub struct SimWorld { /* built from CacheDoc */ }
 
 pub const VEHICLE_STRIDE: usize = 8;      // f32 lanes per vehicle
-pub const MAX_VEHICLES: usize = 512;
+pub const MAX_VEHICLES: usize = 1024;     // MVP 5 Task 8: raised from 512 — see below
 
 impl SimWorld {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, CacheError>;
@@ -208,8 +225,26 @@ impl SimWorld {
     /// Writes up to MAX_VEHICLES records into `out` (len >= MAX_VEHICLES*8),
     /// returns the vehicle count.
     pub fn evaluate(&self, date_yyyymmdd: u32, sec_of_day: f64, out: &mut [f32]) -> usize;
+
+    /// True if the most recent `evaluate()` call hit MAX_VEHICLES and dropped
+    /// vehicles (biased toward high run indices, since evaluate() iterates
+    /// `runs` in order and stops once the buffer is full). Interior
+    /// mutability (`Cell<bool>`, not `Mutex`) is safe here because SimWorld
+    /// lives inside one Web Worker and evaluate() is never called
+    /// concurrently. MVP 5 Task 8 — previously overflow was silent and looked
+    /// like a data bug (trains simply missing).
+    pub fn last_truncated(&self) -> bool;
 }
 ```
+
+**MAX_VEHICLES = 1024 (MVP 5 Task 8).** Was 512 through MVP 2-4, sized for the
+Green Line's ~60 concurrent trains. Raised ahead of the ~9-line network
+(Task 11) so a peak is never silently clipped — 512 left little headroom over
+the SRS NF1 300-concurrent target. Cost is buffer memory only (1024 × 8 × 4 =
+32 KB per frame buffer, 3 in the pool = 96 KB). The preprocessor's `--report`
+now measures the real per-day peak (see §2) instead of guessing; if a future
+network's reported `peak_concurrent` exceeds 1024, raise the constant again
+rather than accepting truncation.
 
 Vehicle record layout (stride 8 × f32) — **identical constants in
 `src/sim/protocol.ts`**:
