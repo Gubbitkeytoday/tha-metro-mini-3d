@@ -52,10 +52,26 @@ function toLocalVec3(points: TrackPoint[]): THREE.Vector3[] {
  * structure holds for only one sample) borrows one point from the
  * neighbouring run — CatmullRomCurve3 throws below 2 points, and this also
  * gives that portal a shared vertex instead of a hole between the last
- * sample of one structure and the first of the next. A lone run can only be
- * too short when it has a neighbour to borrow from: a track under 2 points
- * returns early above, so a single-segment (uniform-structure) track is
- * always already long enough.
+ * sample of one structure and the first of the next.
+ *
+ * Only the very last run can ever borrow *backward* (prepending its
+ * predecessor's last point) — every other short run borrows *forward*
+ * (appending its successor's first point), because path order forbids
+ * putting a later point before an earlier one. That asymmetry is why the
+ * padding pass below walks **right to left**: the last run's backward
+ * borrow always reads its predecessor's still-untouched, genuinely native
+ * last point (nothing to its left has been visited yet), and any earlier
+ * run's forward borrow then reads whatever its successor already settled
+ * on. A left-to-right pass gets this backwards — an earlier run pads
+ * itself first (mutating in place), so by the time the last run looks left
+ * for its "predecessor's last point" it reads that mutation instead of the
+ * predecessor's own point, producing a degenerate self-duplicated run (see
+ * the regression tests below the two-segment case this bit).
+ *
+ * `buildTrackDeck` relies on this ordering: for every run except the last,
+ * `run[0]` is guaranteed native (never a borrowed point), so it can read
+ * `run[0][3]` for the run's true structure; the last run instead reads
+ * `run[run.length - 1][3]`, which is native there for the same reason.
  */
 export function splitByStructure(track: TrackPoint[]): TrackPoint[][] {
   if (track.length < 2) return [];
@@ -69,7 +85,7 @@ export function splitByStructure(track: TrackPoint[]): TrackPoint[][] {
     }
   }
 
-  for (let i = 0; i < runs.length; i++) {
+  for (let i = runs.length - 1; i >= 0; i--) {
     if (runs[i].length >= 2) continue;
     if (i + 1 < runs.length) runs[i] = [...runs[i], runs[i + 1][0]];
     else runs[i] = [runs[i - 1][runs[i - 1].length - 1], ...runs[i]];
@@ -154,8 +170,14 @@ export function buildTrackDeck(line: LineGeometry): THREE.Group {
   const group = new THREE.Group();
   group.name = `track-${line.key}`;
   const color = new THREE.Color(line.color);
-  for (const [i, run] of splitByStructure(line.track).entries()) {
-    const structure = run[0][3];
+  const runs = splitByStructure(line.track);
+  for (const [i, run] of runs.entries()) {
+    // run[0] is native to every run EXCEPT the last one — splitByStructure
+    // only ever pads a short run by prepending a borrowed point (path order
+    // forbids appending a point that comes earlier in the track), and only
+    // the last run can be short with nothing after it to append instead. See
+    // splitByStructure's doc comment for the full reasoning.
+    const structure = (i === runs.length - 1 ? run[run.length - 1] : run[0])[3];
     const mesh = sweepDeck(run, profileFor(line, structure), color);
     mesh.name = `track-${line.key}-${structure}-${i}`;
     mesh.userData.structure = structure;

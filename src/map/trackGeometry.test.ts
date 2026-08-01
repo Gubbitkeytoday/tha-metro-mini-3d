@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DECK_PROFILE, poleTransform, splitByStructure } from "./trackGeometry";
-import type { TrackPoint } from "../types";
+import { DECK_PROFILE, buildTrackDeck, poleTransform, splitByStructure } from "./trackGeometry";
+import type { LineGeometry, TrackPoint } from "../types";
 
 describe("deck profile by structure", () => {
   it("gives an at-grade line a shallow slab, not a viaduct box", () => {
@@ -53,6 +53,90 @@ describe("splitByStructure", () => {
     // CatmullRomCurve3 throws on fewer than 2 points.
     const runs = splitByStructure([p(0, "elevated")]);
     expect(runs).toHaveLength(0);
+  });
+});
+
+// Regression coverage for a review round-1 finding: a run that changes
+// structure at the very first or very last vertex of the track. Both
+// findings below were only visible with a run that had a genuine,
+// non-degenerate neighbour to borrow from (unlike the 2-point case above,
+// where every solution is forced to self-duplicate somewhere).
+describe("splitByStructure — boundary vertex at the very start/end (regression)", () => {
+  it("shares a genuine boundary vertex for a trailing single-point run", () => {
+    const runs = splitByStructure([
+      p(0, "elevated"),
+      p(1, "elevated"),
+      p(2, "elevated"),
+      p(3, "underground"),
+    ]);
+    expect(runs).toHaveLength(2);
+    // The shared vertex must be the true predecessor's own last point (e2,
+    // lng 2) — not some other point that happened to be lying around.
+    expect(runs[0].at(-1)).toEqual(runs[1][0]);
+    expect(runs[1][0][0]).toBe(2);
+  });
+
+  it("shares a genuine boundary vertex for a leading single-point run", () => {
+    const runs = splitByStructure([
+      p(0, "underground"),
+      p(1, "elevated"),
+      p(2, "elevated"),
+      p(3, "elevated"),
+    ]);
+    expect(runs).toHaveLength(2);
+    expect(runs[0].at(-1)).toEqual(runs[1][0]);
+    expect(runs[0].at(-1)?.[0]).toBe(1);
+  });
+
+  it("does not read a sibling run's already-borrowed point (regression for review finding 2)", () => {
+    // A left-to-right padding pass pads the elevated run first (forward-
+    // borrowing the underground run's point), then the underground run's
+    // own backward-borrow reads that ALREADY-MUTATED elevated run instead
+    // of its true original last point — producing self-duplicate [u1, u1]
+    // rather than the genuine two-point [e0, u1] overlap. This is the
+    // pathological 2-point case (see "overlaps runs by one point" above),
+    // where no solution can avoid self-duplication entirely — but which run
+    // ends up degenerate is not arbitrary: it must be the run that has
+    // nothing on its own OTHER side to borrow from instead (here, run 0,
+    // the very first run in the whole track). The run that legitimately
+    // represents the boundary vertex — run 1 here — must come out clean.
+    const runs = splitByStructure([p(0, "elevated"), p(1, "underground")]);
+    expect(runs[1][0]).not.toEqual(runs[1][1]);
+  });
+});
+
+describe("buildTrackDeck structure labelling (regression)", () => {
+  const line = (track: TrackPoint[]): LineGeometry => ({
+    key: "test",
+    name: "Test Line",
+    nameTh: "สายทดสอบ",
+    color: "#ff0000",
+    structure: "elevated",
+    vehicleType: "heavy",
+    gtfsRouteId: null,
+    preRevenue: false,
+    relationId: 0,
+    osmName: "test",
+    track,
+    stations: [],
+  });
+
+  it("labels a trailing single-point run with its OWN structure, not its predecessor's borrowed point", () => {
+    const group = buildTrackDeck(
+      line([p(0, "elevated"), p(1, "elevated"), p(2, "elevated"), p(3, "underground")]),
+    );
+    expect(group.children).toHaveLength(2);
+    expect(group.children[0].userData.structure).toBe("elevated");
+    expect(group.children[1].userData.structure).toBe("underground");
+  });
+
+  it("labels a leading single-point run with its OWN structure", () => {
+    const group = buildTrackDeck(
+      line([p(0, "underground"), p(1, "elevated"), p(2, "elevated"), p(3, "elevated")]),
+    );
+    expect(group.children).toHaveLength(2);
+    expect(group.children[0].userData.structure).toBe("underground");
+    expect(group.children[1].userData.structure).toBe("elevated");
   });
 });
 
