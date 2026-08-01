@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const TMB_MAGIC: u32 = 0x544D_4231; // "TMB1"
-pub const TMB_VERSION: u16 = 2;
+pub const TMB_VERSION: u16 = 3;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CacheDoc {
@@ -56,7 +56,9 @@ pub struct StationDoc {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct InterchangeRef {
-    pub route_idx: u8,
+    /// u16, not u8: `rj as u8` in link_interchanges was an unchecked
+    /// narrowing that would silently wrap past 256 routes.
+    pub route_idx: u16,
     pub station_idx: u16,
 }
 
