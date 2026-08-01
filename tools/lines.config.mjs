@@ -19,6 +19,27 @@ export const STRUCTURE_ALTITUDE_M = {
 
 export const VEHICLE_TYPES = ["heavy", "monorail", "apm", "commuter"];
 
+/**
+ * Classify one OSM way as underground / elevated / at-grade from its
+ * tunnel/bridge/layer tags.
+ *
+ * Duplicated from src/map/structure.ts because this file runs in plain node
+ * (the fetcher imports it directly) and cannot import a .ts module. Keep the
+ * two copies in sync — lines.config.test.mjs asserts they agree on the same
+ * cases structure.test.ts checks for the TS copy.
+ */
+export function structureOfWay(tags, fallback = "elevated") {
+  const tunnel = tags.tunnel;
+  if (tunnel && tunnel !== "no") return "underground";
+  const bridge = tags.bridge;
+  if (bridge && bridge !== "no") return "elevated";
+  if (tunnel === "no" || bridge === "no") return "elevated";
+  const layer = Number.parseInt(tags.layer ?? "", 10);
+  if (Number.isFinite(layer) && layer < 0) return "underground";
+  if (Number.isFinite(layer) && layer > 0) return "elevated";
+  return fallback;
+}
+
 export const LINES = [
   {
     key: "sukhumvit",

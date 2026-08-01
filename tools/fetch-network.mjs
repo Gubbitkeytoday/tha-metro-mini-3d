@@ -18,7 +18,13 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertRegistryValid, INTERCHANGE_OVERRIDES, LINES, STRUCTURE_ALTITUDE_M } from "./lines.config.mjs";
+import {
+  assertRegistryValid,
+  INTERCHANGE_OVERRIDES,
+  LINES,
+  STRUCTURE_ALTITUDE_M,
+  structureOfWay,
+} from "./lines.config.mjs";
 
 const OUT_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../src/data/network.json");
 
@@ -71,9 +77,13 @@ async function overpass(query) {
   throw lastError;
 }
 
-/** Greedily stitch unordered way segments into one continuous polyline. */
-function stitchWays(ways) {
-  const segments = ways.map((w) => w.geometry.map((p) => [p.lon, p.lat]));
+/** Greedily stitch unordered way segments into one continuous polyline.
+ *  Each point carries the structure classification of the way it came from. */
+function stitchWays(ways, tagsByWay, defaultStructure) {
+  const segments = ways.map((w) => {
+    const structure = structureOfWay(tagsByWay.get(String(w.ref)) ?? {}, defaultStructure);
+    return w.geometry.map((p) => [p.lon, p.lat, structure]);
+  });
   if (segments.length === 0) return [];
   const path = segments.shift();
   const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-4; // ~10 m
@@ -111,7 +121,7 @@ function dedupe(coords) {
   );
 }
 
-async function fetchBranch(relationId, branchKey, altitudeM) {
+async function fetchBranch(relationId, branchKey, defaultStructure) {
   const data = await overpass(`[out:json][timeout:90];relation(${relationId});out geom;`);
   const rel = data.elements.find((e) => e.type === "relation");
   if (!rel) throw new Error(`Relation ${relationId} not found`);
@@ -119,7 +129,21 @@ async function fetchBranch(relationId, branchKey, altitudeM) {
   const trackWays = rel.members.filter(
     (m) => m.type === "way" && m.role === "" && m.geometry,
   );
-  const path = dedupe(stitchWays(trackWays));
+
+  // Way tags are NOT included in an `out geom` member list (same gotcha as
+  // the node tags below) — fetch them for every track way in one follow-up
+  // query so each segment can be classified underground/elevated/at-grade.
+  const wayIds = trackWays.map((w) => String(w.ref)).join(",");
+  let tagsByWay = new Map();
+  if (wayIds.length > 0) {
+    const wayData = await overpass(`[out:json][timeout:90];way(id:${wayIds});out tags;`);
+    // String() both sides: Overpass returns numeric ids, and a number-vs-string
+    // key mismatch makes every lookup miss silently (this exact bug blanked
+    // all 155 station names in MVP 5 before it was caught).
+    tagsByWay = new Map(wayData.elements.map((e) => [String(e.id), e.tags ?? {}]));
+  }
+
+  const path = dedupe(stitchWays(trackWays, tagsByWay, defaultStructure));
 
   // Candidate stop/platform node members: PTv2 route relations mark these
   // either with an explicit role starting "stop"/"platform", OR with an
@@ -165,21 +189,38 @@ async function fetchBranch(relationId, branchKey, altitudeM) {
     s.code = tags.ref ?? "";
   }
 
+  // Per-line structure histogram so a mis-tagged relation is obvious at
+  // fetch time (e.g. a whole line coming back as pure "elevated" when it's
+  // known to dive underground somewhere).
+  const histogram = path.reduce((acc, p) => {
+    acc[p[2]] = (acc[p[2]] ?? 0) + 1;
+    return acc;
+  }, {});
   console.log(
     `${branchKey}: relation ${relationId} "${rel.tags?.name ?? ""}" — ` +
-      `${trackWays.length} ways -> ${path.length} points, ${stations.length} stops`,
+      `${trackWays.length} ways -> ${path.length} points ` +
+      `(${Object.entries(histogram).map(([k, v]) => `${k}:${v}`).join(" ")}), ` +
+      `${stations.length} stops`,
   );
+  // Station altitude still uses the line's default structure — a station's
+  // own OSM node carries no tunnel/bridge/layer tag to classify against.
+  const stationAltitudeM = STRUCTURE_ALTITUDE_M[defaultStructure];
   return {
     relationId,
     osmName: rel.tags?.name ?? "",
-    // [lon, lat, altitude_m] per SRS §F1.3
-    track: path.map(([lon, lat]) => [lon, lat, altitudeM]),
+    // [lon, lat, altitude_m, structure] per SRS §F1.3, structure per-point
+    track: path.map(([lon, lat, structure]) => [
+      lon,
+      lat,
+      STRUCTURE_ALTITUDE_M[structure],
+      structure,
+    ]),
     stations: stations.map((s) => ({
       id: s.id,
       name: s.name ?? "",
       nameTh: s.nameTh ?? "",
       code: s.code ?? "",
-      position: [s.lon, s.lat, altitudeM],
+      position: [s.lon, s.lat, stationAltitudeM],
     })),
   };
 }
@@ -215,8 +256,7 @@ async function main() {
   for (const line of LINES) {
     if (!selected.includes(line)) continue;
     const relationId = line.osm.relationId ?? (await discoverRelationId(line));
-    const alt = STRUCTURE_ALTITUDE_M[line.structure];
-    const geom = await fetchBranch(relationId, line.key, alt);
+    const geom = await fetchBranch(relationId, line.key, line.structure);
     lines.push({
       key: line.key,
       name: line.name,

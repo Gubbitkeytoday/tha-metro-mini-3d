@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { assertRegistryValid, LINES, STRUCTURE_ALTITUDE_M } from "./lines.config.mjs";
+import { assertRegistryValid, LINES, STRUCTURE_ALTITUDE_M, structureOfWay } from "./lines.config.mjs";
 
 describe("line registry", () => {
   it("is internally consistent", () => {
@@ -38,5 +38,15 @@ describe("line registry", () => {
     expect(STRUCTURE_ALTITUDE_M.elevated).toBeLessThanOrEqual(22);
     expect(STRUCTURE_ALTITUDE_M.atGrade).toBeGreaterThan(0);
     expect(STRUCTURE_ALTITUDE_M.underground).toBeLessThanOrEqual(-12);
+  });
+
+  it("classifies OSM ways the same way the TS copy does", () => {
+    // structureOfWay is duplicated (node can't import the .ts). If these two
+    // ever drift, the fetcher stamps one structure and the renderer expects
+    // another.
+    expect(structureOfWay({ tunnel: "yes" })).toBe("underground");
+    expect(structureOfWay({ bridge: "yes" })).toBe("elevated");
+    expect(structureOfWay({ layer: "-2" })).toBe("underground");
+    expect(structureOfWay({}, "atGrade")).toBe("atGrade");
   });
 });
