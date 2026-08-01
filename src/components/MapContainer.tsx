@@ -8,7 +8,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // silently stalls (blank base map). Hand it a URL Vite actually emits; the
 // `?worker&url` suffix bundles the worker together with its shared chunk.
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import { GreenLineLayer } from "../map/ThreeLayer";
+import { NetworkLayer } from "../map/ThreeLayer";
 import { installCameraControls } from "../map/cameraControls";
 import { FollowCamera } from "../map/followCamera";
 import { pickAt } from "../map/selection";
@@ -16,8 +16,8 @@ import { VehicleManager } from "../map/VehicleManager";
 import { localToLngLat, ORIGIN_LNG_LAT } from "../map/coordinates";
 import { SimClient, activeSimClient } from "../sim/SimClient";
 import { useAppStore } from "../stores/useAppStore";
-import greenLine from "../data/green-line.json";
-import type { GreenLineData } from "../types";
+import network from "../data/network.json";
+import type { NetworkData } from "../types";
 
 setWorkerUrl(maplibreWorkerUrl);
 
@@ -53,7 +53,14 @@ export function MapContainer() {
     const removeCameraControls = installCameraControls(map);
 
     let sim: SimClient | null = null;
+    let unsubscribeVisibility: (() => void) | null = null;
     let rafId = 0;
+    // style.load fires asynchronously; if effect cleanup runs first (a React
+    // StrictMode double-invoke, or a fast unmount before tiles finish
+    // loading), sim/unsubscribeVisibility/rafId below are created after
+    // cleanup already ran with them still null, so nothing would ever tear
+    // them down. Guarded at the end of the style.load handler.
+    let disposed = false;
     const follow = new FollowCamera();
     // Latest interpolated poses, kept for click hit-testing. Owned by the
     // render path — never copied into React state (§3A.7).
@@ -62,10 +69,39 @@ export function MapContainer() {
 
     map.on("style.load", () => {
       const store = useAppStore.getState();
-      const vehicleManager = new VehicleManager();
-      const layer = new GreenLineLayer(greenLine as unknown as GreenLineData, vehicleManager);
+      const net = network as unknown as NetworkData;
+      const vehicleManager = new VehicleManager(
+        net.lines.map((l) => ({ color: l.color, vehicleType: l.vehicleType })),
+      );
+      const layer = new NetworkLayer(net, vehicleManager);
       map.addLayer(layer);
       setMapReady(true);
+      store.setRoutes(net.lines);
+      // Seed the layer/vehicle-manager visibility from whatever hiddenRoutes
+      // already holds at mount time — on a cold load this is always [], but
+      // the subscription below only reacts to *changes*, so without this a
+      // remount with pre-existing hidden routes (future persistence, or a
+      // React StrictMode double-invoke in dev) would render every line
+      // visible until the next toggle.
+      {
+        const initial = useAppStore.getState();
+        for (let i = 0; i < net.lines.length; i++) {
+          const visible = initial.isRouteVisible(i);
+          layer.setLineVisible(i, visible);
+          vehicleManager.setRouteVisible(i, visible);
+        }
+      }
+      // Visibility is UI state, so it drives the scene through a subscription
+      // rather than the per-frame path.
+      unsubscribeVisibility = useAppStore.subscribe((state, prev) => {
+        if (state.hiddenRoutes === prev.hiddenRoutes) return;
+        for (let i = 0; i < net.lines.length; i++) {
+          const visible = state.isRouteVisible(i);
+          layer.setLineVisible(i, visible);
+          vehicleManager.setRouteVisible(i, visible);
+        }
+        map.triggerRepaint();
+      });
 
       store.setEngineStatus("loading");
       let lastCountUpdate = 0;
@@ -120,13 +156,22 @@ export function MapContainer() {
         rafId = requestAnimationFrame(loop);
       };
       rafId = requestAnimationFrame(loop);
+
+      if (disposed) {
+        // Cleanup already ran before this fired — tear down what it missed
+        // instead of leaking a running rAF loop, worker and subscription.
+        cancelAnimationFrame(rafId);
+        unsubscribeVisibility?.();
+        sim?.dispose();
+        if (activeSimClient.current === sim) activeSimClient.current = null;
+      }
     });
 
     // Click to select a train or station. Uses the most recent interpolated
     // buffer — the same poses that are on screen.
     const onMapClick = (e: { point: { x: number; y: number } }) => {
-      const { stations, selectRun, selectStation } = useAppStore.getState();
-      const hit = pickAt(map, lastVehicles, lastCount, stations, e.point);
+      const { stations, selectRun, selectStation, hiddenRoutes } = useAppStore.getState();
+      const hit = pickAt(map, lastVehicles, lastCount, stations, e.point, hiddenRoutes);
       if (!hit) {
         // Clicking empty map clears the selection, like clicking away from
         // anything else.
@@ -171,8 +216,15 @@ export function MapContainer() {
       }
     });
 
-    if (import.meta.env.DEV) {
-      // dev-only handles for tools/screenshot.mjs and tools/verify-*.mjs
+    // Dev builds always expose these; a production build (tools/verify-perf.mjs
+    // runs against `npm run preview`, i.e. a real prod bundle — dev-mode React
+    // and unminified Three would make the NF1 numbers meaningless) exposes them
+    // too, but only when opted in via `?debug=1`, so ordinary production
+    // visitors never get debug globals on `window`.
+    const debugRequested =
+      typeof window !== "undefined" && new URLSearchParams(window.location.search).get("debug") === "1";
+    if (import.meta.env.DEV || debugRequested) {
+      // dev/debug-only handles for tools/screenshot.mjs and tools/verify-*.mjs
       const dev = window as unknown as {
         __map?: MapLibreMap;
         __sim?: typeof activeSimClient;
@@ -187,9 +239,11 @@ export function MapContainer() {
       dev.__localToLngLat = localToLngLat;
     }
     return () => {
+      disposed = true;
       cancelAnimationFrame(rafId);
       removeCameraControls();
       unsubscribeFollow();
+      unsubscribeVisibility?.();
       map.off("click", onMapClick);
       map.off("dragstart", onDragStart);
       window.removeEventListener("keydown", onKeyDown);

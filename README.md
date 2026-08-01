@@ -2,7 +2,7 @@
 
 > Interactive, web-based 3D visualization of Bangkok's rail transit network — trains moving on schedule along authentic geography, elevations, and timetables.
 
-**Status:** 🚧 Early development — **MVP 1–4 delivered**: BTS Green Line 3D track, GTFS→binary data pipeline, scheduled trains moving with time-warp, and click-to-inspect with a follow camera and time scrubber; see the [roadmap](#roadmap). **Repo:** [`tha-metro-mini-3d`](https://github.com/naiiytom/tha-metro-mini-3d)
+**Status:** 🚧 Early development — **MVP 1–5 delivered**: BTS Green Line 3D track, GTFS→binary data pipeline, scheduled trains moving with time-warp, click-to-inspect with a follow camera and time scrubber, and multi-line breadth (MRT Purple, Airport Rail Link, MRT Pink, MRT Yellow, BTS Gold, SRT Dark/Light Red — 9 lines simulated, 155 stations, 4,481 runs); see the [roadmap](#roadmap). **Repo:** [`tha-metro-mini-3d`](https://github.com/naiiytom/tha-metro-mini-3d)
 
 ---
 
@@ -34,21 +34,42 @@ Orbiting moves both axes in one motion, so a diagonal drag tilts and turns toget
 
 ## Coverage
 
-Operational lines receive full simulation (track + trains); pre-revenue lines are rendered as track only.
+Operational lines receive full simulation (track + trains); pre-revenue lines are rendered as track only. **As of MVP 5 (2026-07-31), nine lines are simulated**: BTS Sukhumvit & Silom, MRT Purple, Airport Rail Link, MRT Pink, MRT Yellow, BTS Gold, and SRT Dark/Light Red — 155 stations, 34 trip patterns, 4,481 expanded runs, ~213 KB gzip. MRT Blue and Orange remain MVP 6.
 
 | Line | Type | Operator | Structure | v1.0 |
 |------|------|----------|-----------|------|
 | BTS Sukhumvit & Silom (Green) | Heavy Rail | BTSC | Elevated | Full |
-| MRT Blue | Heavy Rail | BEM | Underground / Elevated | Full |
 | MRT Purple | Heavy Rail | BEM | Elevated | Full |
-| SRT Red (North & West) | Commuter Rail | SRTET | At-Grade / Elevated | Full |
 | Airport Rail Link (ARL) | Express / Commuter | Asia Era One | Elevated | Full |
 | MRT Pink | Monorail | NBM | Elevated | Full |
 | MRT Yellow | Monorail | EBM | Elevated | Full |
 | BTS Gold | APM (monorail-class) | BMA/KT (BTSC) | Elevated | Full |
+| SRT Dark Red | Commuter Rail | SRTET | Elevated (nominal — see note) | Full |
+| SRT Light Red | Commuter Rail | SRTET | Elevated (nominal — see note) | Full |
+| MRT Blue | Heavy Rail | BEM | Underground / Elevated | MVP 6 (not yet added) |
 | MRT Orange | Heavy Rail | — | Underground / Elevated | **Track only (pre-revenue)** |
 
-> ⚠️ Line status reflects **early 2025** and is unverified in this draft. Re-check the Orange Line and any new extensions (e.g. Pink Line spur to Muang Thong Thani, Purple southern extension) before relying on this table.
+> Line status re-verified 2026-07-31 (see [`docs/SRS.md` §2](./docs/SRS.md#2-system-scope--transit-coverage)): MRT Orange is still pre-revenue (Eastern Section now projected late 2027, Western Section 2030) and stays MVP 6 track-only. The Pink Line's Muang Thong Thani spur has been in full paid revenue service since 2025-06-17 but is **not yet in this registry** — the Namtang feed bundles its 4 shuttle trip patterns into the same GTFS route id as the main Pink Line, and its own OSM relation pair wasn't fetched for this task, so it's excluded from simulation for now (main Pink Line is unaffected). The Purple Line's Tao Poon–Rat Burana southern extension remains under construction, not open.
+>
+> **"Elevated (nominal — see note)" for SRT Red:** the real Dark/Light Red lines run a mix of at-grade and elevated track. MVP 5 models each as a single nominal elevated altitude — every one of the 9 registered lines currently uses `structure: "elevated"` in `tools/lines.config.mjs`, including SRT Red. The `atGrade` structure type (`STRUCTURE_ALTITUDE_M`/`DECK_PROFILE`) exists and works, it's just not exercised by any currently-registered line; real per-segment (at-grade vs. elevated) structure for SRT Red is deferred to MVP 6's underground work.
+
+### Track geometry provenance (OSM relations)
+
+Every line's 3D track polyline comes from a **pinned** OpenStreetMap route relation (never a live discovery lookup at build time — a name-match discovery mode exists in `tools/fetch-network.mjs` only for bootstrapping a *new* line, and its resolved id must be pinned back into the registry before it's committed). Station coordinates for simulated lines come from the Namtang GTFS feed; track-only lines (currently none — see [Coverage](#coverage)) would use OSM stop nodes instead.
+
+| Line | OSM relation id | GTFS `route_id` |
+|------|-----------------|------------------|
+| BTS Sukhumvit | [444651](https://www.openstreetmap.org/relation/444651) | `1` |
+| BTS Silom | [2067854](https://www.openstreetmap.org/relation/2067854) | `2` |
+| MRT Purple | [6988563](https://www.openstreetmap.org/relation/6988563) | `4` |
+| Airport Rail Link | [2148241](https://www.openstreetmap.org/relation/2148241) | `5` |
+| MRT Pink | [16740886](https://www.openstreetmap.org/relation/16740886) | `2436` |
+| MRT Yellow | [15806897](https://www.openstreetmap.org/relation/15806897) | `2224` |
+| BTS Gold | [11681439](https://www.openstreetmap.org/relation/11681439) | `2025` |
+| SRT Dark Red | [13058384](https://www.openstreetmap.org/relation/13058384) | `2026` |
+| SRT Light Red | [13178788](https://www.openstreetmap.org/relation/13178788) | `2027` |
+
+Source of truth for this table: `tools/lines.config.mjs`'s `LINES` registry — update there first, this table is descriptive.
 
 ## Tech stack
 
@@ -80,7 +101,7 @@ tha-metro-mini-3d/
 
 ## Getting started
 
-> Prerequisites: [Node.js](https://nodejs.org/) 18+. The built Wasm engine (`src/sim/pkg/`) and binary timetable (`public/data/green-line.tmb`) are committed, so a Rust toolchain is **only** needed to regenerate them ([Rust](https://rustup.rs/) + `wasm32-unknown-unknown` target + [`wasm-pack`](https://rustwasm.github.io/wasm-pack/); see `rust-engine/`).
+> Prerequisites: [Node.js](https://nodejs.org/) 18+. The built Wasm engine (`src/sim/pkg/`) and binary timetable (`public/data/network.tmb`) are committed, so a Rust toolchain is **only** needed to regenerate them ([Rust](https://rustup.rs/) + `wasm32-unknown-unknown` target + [`wasm-pack`](https://rustwasm.github.io/wasm-pack/); see `rust-engine/`).
 
 ```bash
 # clone
@@ -100,21 +121,23 @@ Other scripts:
 | `npm run typecheck` | Type-check only |
 | `npm test` | Vitest unit tests for the pure helpers (time formatting, bearing math) |
 | `npm run preview` | Serve the production build locally |
-| `npm run data:fetch` | Regenerate `src/data/green-line.json` track geometry from OpenStreetMap (Overpass) |
-| `npm run data:stations -- <gtfs-dir>` | Merge official station coordinates from an extracted [Namtang GTFS](https://namtang-api.otp.go.th/opendata) feed |
+| `npm run data:fetch [lineKey ...]` | Regenerate `src/data/network.json` — every registry line's track geometry + stations from OpenStreetMap (Overpass); pass one or more `tools/lines.config.mjs` keys to fetch a subset |
+| `node tools/inspect-gtfs.mjs <gtfs-dir>` | Read-only: print every route in an extracted GTFS feed (id, agency, names, colour, trip count, frequency-based or not) — the fastest way to check a feed before adding a `tools/lines.config.mjs` entry |
 | `npm run screenshot -- [url] [outDir]` | Headless-browser screenshots from several camera poses (visual check) |
 | `npm run verify:camera` | Camera gesture assertions (pan/zoom/pitch/bearing) against a running dev server |
 | `npm run verify:mvp4` | MVP 4 acceptance: selection, follow-camera, inspector, station board, scrubbing |
+| `npm run verify:mvp5` | MVP 5 acceptance: every registry line renders in order, trains run on 3+ lines at once, hiding a line preserves its simulation and blocks its clicks, interchange chips render, monorail vs. heavy-rail rendered geometry differs |
 | `npm run verify:kinematics` | Data-level motion assertions against a running dev server |
 | `npm run verify:closeup` | Camera-on-a-train screenshot against a running dev server |
+| `npm run build && npm run preview` (one shell), then `npm run verify:perf` (another) | NF1 performance acceptance against a **production** build: tick-count sanity, sim tick time, truncation, frame rate, and peak-concurrency scale — see [Coverage](#coverage) for the current, honestly-disclosed 4/5 result |
 
 Rust toolchain required for these (see [CONTRIBUTING](./docs/CONTRIBUTING.md)):
 
 | Command | What it does |
 |---------|--------------|
-| `npm run rust:test` | `cargo test` across the `rust-engine/` workspace |
+| `npm run rust:test` | `cargo test` across the `rust-engine/` workspace (36 tests) |
 | `npm run wasm:build` | Rebuild the Wasm engine into `src/sim/pkg/` (committed output) |
-| `npm run data:preprocess -- --gtfs <gtfs-dir>` | Regenerate `public/data/green-line.tmb` from an extracted GTFS feed (committed output) |
+| `npm run data:preprocess -- --gtfs <gtfs-dir>` | Regenerate `public/data/network.tmb` for the whole registry from an extracted GTFS feed (committed output) — route identity comes entirely from `network.json`'s line order |
 
 ## Roadmap
 
@@ -126,7 +149,7 @@ Delivered as vertical, shippable slices — track geometry first, then motion, t
 | **2** ✅ | Green Line data pipeline — GTFS → binary cache, loaded & validated client-side. **Delivered:** Rust preprocessor expands the frequency-based Namtang feed (14 patterns → 2,162 runs, 61 stations snapped onto track) into a 123 KB bincode cache (71 KB gzip vs 3 MB budget); client validation summary shown in the UI. |
 | **3** ✅ | Green Line trains moving — Wasm interpolation engine + Web Worker. **Delivered:** 93 KB Wasm engine (dwell/transit/smoothstep/tangent-yaw) evaluated at 10 Hz in a worker, transferable-buffer ping-pong, render-side interpolation, InstancedMesh 4-car trains (2 draw calls), 1×/5×/10×/60× time-warp with Bangkok clock. |
 | **4** ✅ | Interaction & UI — follow-cam, inspector, time scrubber, timetable drawer. **Delivered:** click-to-select trains and stations (screen-space picking), third-person follow camera, train inspector with next-stop ETA and the full call list, live station board, and a scrubber over the service day; schedule lookups added to the Rust engine and crossed over a promise-based worker query channel. |
-| 5 | Multi-line breadth — Purple, ARL, Pink, Yellow, Gold, Red. |
+| **5** ✅ | Multi-line breadth — Purple, ARL, Pink, Yellow, Gold, Red. **Delivered:** the line registry (`tools/lines.config.mjs`) grew from 2 to 9 entries with pinned OSM relation ids and GTFS route ids verified against the real Namtang feed; 155 stations, 34 patterns, 4,481 runs, ~213 KB gzip cache. Surfaced and fixed real data-pipeline gaps along the way: an OSM-node-id type mismatch, the Pink Line's Muang Thong Thani spur trips sharing a GTFS route id with the main line, a GTFS/OSM coordinate mismatch at the Pink Line's own terminus, and OSM stop-position nodes without name tags silently blanking station names. Line selector, cross-route interchange metadata, and monorail/APM vehicle models shipped alongside; `npm run verify:mvp5` (6/6) and `npm run verify:mvp4` (14/14, unchanged) both green. **NF1 performance is 4 of 5 sub-checks, disclosed not hidden:** the sim ticks a meaningful sample count, sim tick (p95 ≈ 0.2–0.3 ms), no truncation, and frame rate (~100 FPS) all pass; the ≥300-concurrent-vehicle scale target is not yet reached — this real 9-line network's measured peak is 171–172 vehicles, well under `MAX_VEHICLES` (1024) but under the 300 target too. That's real GTFS schedule density for these lines, not a bug, and the assertion is left failing on purpose rather than weakened. |
 | 6 | Underground + polish — MRT Blue, Orange (track only), transparency mode, day/night lighting. |
 
 ## Data & licensing

@@ -3,7 +3,7 @@
 **Project Name:** Greater Bangkok Metro Mini 3D — 3D Transit Simulation Platform
 **Version:** 1.0.0
 **Status:** Draft / Technical Proposal
-**Last Updated:** 2026-07-30
+**Last Updated:** 2026-07-31
 **Repository:** [tha-metro-mini-3d](https://github.com/naiiytom/tha-metro-mini-3d)
 
 ---
@@ -27,7 +27,7 @@ The simulation covers the major urban rail networks in the Bangkok Metropolitan 
 | BTS Sukhumvit & Silom Lines | Heavy Rail | BTSC | Elevated |
 | MRT Blue Line | Heavy Rail | BEM | Underground / Elevated |
 | MRT Purple Line | Heavy Rail | BEM | Elevated |
-| SRT Red Lines (North & West) | Commuter Rail | SRTET (SRT) | At-Grade / Elevated |
+| SRT Red Lines (North & West) | Commuter Rail | SRTET (SRT) | At-Grade / Elevated (nominal — see note) |
 | Airport Rail Link (ARL) | Express / Commuter | Asia Era One (SRT) | Elevated |
 | MRT Pink Line | Monorail | NBM | Elevated |
 | MRT Yellow Line | Monorail | EBM | Elevated |
@@ -39,10 +39,11 @@ The simulation covers the major urban rail networks in the Bangkok Metropolitan 
 - All lines above are in scope for v1.0. The **Gold Line** is operational and receives full simulation (track + moving trains). The **Orange Line** is not yet in passenger service, so it is included as **rendered track geometry only** — no vehicles, no timetable — until an operational schedule exists (see §7 MVP 6 and §8).
 - Interchange relationships between lines are modelled for the UI inspector but do not affect vehicle motion (no passenger routing in v1.0).
 
-> **⚠ Operational-status caveat — verify before publishing.** The operational vs. pre-revenue classification above reflects the situation as of **early 2025** and has **not** been confirmed against a live source in this draft. Bangkok's rail network is expanding rapidly; before release, re-verify each line's current status and reconcile the roadmap accordingly:
-> - **MRT Orange Line** — highest priority to check. If it has since entered revenue service, promote it from "track only" (MVP 6) to full simulation (add GTFS feed + trains, per the MVP 5/6 path).
-> - **Extensions** — check for newly-opened segments, e.g. the **Pink Line spur to Muang Thong Thani**, and the **MRT Purple Line southern extension (Tao Poon–Rat Burana)**, which was under construction as of early 2025. Add any opened segment to this table.
-> - Lines listed as operational (Green, Blue, Purple, Red, ARL, Pink, Yellow, Gold) were all in passenger service as of early 2025 and are not expected to have regressed, but station-count/extension changes should still be checked when sourcing each GTFS feed.
+> **⚠ Operational-status caveat — re-verified 2026-07-31 (MVP 5, Task 11).** The classification above was originally drafted from an early-2025 snapshot and unconfirmed against a live source. Three open questions flagged in that draft have now been checked against current sources:
+> - **MRT Orange Line** — still pre-revenue, confirmed via [Wikipedia: Orange Line (Bangkok)](https://en.wikipedia.org/wiki/Orange_Line_(Bangkok)) and [Bangkok Post, "Orange Line due to fully open in 2030"](https://www.bangkokpost.com/thailand/general/2832487/orange-line-due-to-fully-open-in-2030) (accessed 2026-07-31). The Eastern Section (Thailand Cultural Centre–Yaek Rom Klao) is now projected to open **late 2027** (per an August 2025 announcement, moved up from a prior 2028 target); the Western Section (Bang Khun Non–Thailand Cultural Centre) is projected for **July 2030**, with only ~14% of civil works complete as of end-July 2025. **Remains track-only, MVP 6** — the classification in this table and in MVP 6's scope is unchanged and correctly conservative.
+> - **Pink Line spur to Muang Thong Thani** — confirmed **open and in full paid revenue service since 2025-06-17** (free trial ran from 2025-05-20), per [Nation Thailand, "Bangkok's Pink Metro Line Extension Opens Early with Free Rides"](https://www.nationthailand.com/news/general/40050080) (published 2025-05-16, accessed 2026-07-31). Two new stations: Impact Muang Thong Thani (MT01) and Lake Muang Thong Thani (MT02). **Not added to the registry in Task 11** — the OSM relation pair for the spur (19149752/19150155) is separate from the main Pink Line relation (16740886/16740887) fetched for this task, and pulling it in was deliberately deferred to keep Task 11's scope to the main line; a future task should add it as its own registry entry once its GTFS route id (if the Namtang feed publishes one separately) is confirmed.
+> - **MRT Purple Line southern extension (Tao Poon–Rat Burana)** — confirmed **still under construction, not open**, per [Bangkok Post, "Purple Line extension '50% done'"](https://www.bangkokpost.com/thailand/general/2920320/purple-line-extension-50-done) and [Nation Thailand, "Southern extension of Purple Line 65% complete"](https://www.nationthailand.com/news/policy/40057649) (accessed 2026-07-31). A cross-river tunnel segment is due by May 2026, but the earliest partial opening (Tao Poon–National Library) is now projected for 2028, full completion 2030 — delayed further by a September 2025 road collapse at the worksite. The registry's `purple` entry in this task covers only the existing operational Purple Line (Khlong Bang Phai–Tao Poon); the southern extension is out of scope until it opens.
+> - Lines listed as operational (Green, Purple, ARL, Pink [main line], Yellow, Gold, Red North/West) were all confirmed against the real Namtang GTFS feed in this task (`tools/inspect-gtfs.mjs`, 2026-07-31) — each has a live `route_id` with real `frequencies.txt` rows, not just a bare `trips.txt` pattern. **MRT Blue Line remains unverified in this draft** (still scoped to MVP 6, not touched by Task 11) — re-check it when that task starts.
 
 ---
 
@@ -242,6 +243,8 @@ $$
 **NF1 — Performance & frame rate.**
 Target 60 FPS on desktop (GTX 1050 / Apple M1 or equivalent) and 30+ FPS on mobile WebGL browsers. The Wasm simulation tick must complete in **< 3 ms per frame** for up to **300 concurrent active vehicles**.
 
+> **Status as of MVP 5 (2026-07-31), measured by `npm run verify:perf` against a production build of the full 9-line network:** 4 of 5 sub-checks pass. The sim ticks a meaningful sample count during the measurement window (rules out a silently-dead worker), sim tick p95 ≈ 0.2–0.3 ms (well under the 3 ms budget) and frame rate ≈ 100 FPS (well over both the 60/30 FPS targets) both pass comfortably, and no frame is truncated (peak 171–172 vehicles vs. `MAX_VEHICLES` 1024). The **300-concurrent-vehicle scale target is not yet reached**: the real network's measured daily peak (`public/data/network.report.json`'s `peak_concurrent`) is 171–172 vehicles, a fact about actual GTFS schedule density across these 9 lines, confirmed independently by both the preprocessor's own per-minute peak scan and the live harness — not a performance defect. `MAX_VEHICLES` = 1024 leaves ~6× headroom over that measured peak for MVP 6's remaining lines (MRT Blue, MRT Orange). The `verify:perf` assertion is left as a hard, currently-failing gate rather than weakened or satisfied with synthetic load, so a future regression (or a future denser network) is still caught.
+
 **NF2 — Initial load & optimization.**
 Total initial bundle **≤ 5 MB** (compressed assets + binary timetable). 3D GLTF models lazy-load asynchronously with Level-of-Detail (LOD) progressive detail.
 
@@ -365,6 +368,8 @@ Guiding principle: **prove the full render pipeline on one line before adding mo
 
 **Definition of done:** all elevated + at-grade lines (including Gold) render and simulate together within performance budget.
 
+**Delivered (2026-07-31).** The registry (`tools/lines.config.mjs`) grew from 2 lines to 9: Sukhumvit, Silom, MRT Purple, Airport Rail Link, MRT Pink, MRT Yellow, BTS Gold, SRT Dark Red, SRT Light Red — 155 stations, 34 trip patterns, 4,481 expanded runs, all pinned to real OSM relation ids and verified against the live Namtang GTFS feed. **A mixed-structure line gets one nominal altitude in MVP 5:** SRT Red runs both at-grade and elevated in reality, but every one of the 9 registered lines — SRT Red included — currently sets `structure: "elevated"`, so it renders and simulates at a single nominal elevated altitude; the `atGrade` mechanism (`STRUCTURE_ALTITUDE_M`/`DECK_PROFILE`) exists and works but isn't exercised by any registered line yet. Real per-segment (at-grade vs. elevated) structure belongs with MVP 6's underground work. Line selector (F4.1), cross-route interchange metadata (auto-linked within 300 m plus a manual override list), and monorail/APM/commuter vehicle models (distinct consist lengths per vehicle type, verified against actual rendered geometry) are all in place and exercised by `npm run verify:mvp5` (6/6). `npm run verify:mvp4` still passes unchanged (14/14) — single-line interaction did not regress. **Performance is validated with real measured numbers, not just "toward" the target:** 4 of NF1's 5 sub-checks pass outright (tick-count sanity, sim tick, no truncation, frame rate); the 300-concurrent-vehicle scale target is not yet reached by this real network (measured peak 171–172 vehicles) — see §5's NF1 status note for the full picture and why that assertion is left failing on purpose rather than weakened.
+
 ### MVP 6 — Underground + environmental polish (full v1.0)
 
 **Goal:** Complete the network and the "wow" layer.
@@ -379,14 +384,14 @@ Guiding principle: **prove the full render pipeline on one line before adding mo
 
 ### MVP summary
 
-| MVP | Theme | Lines | Trains move? | Key requirements |
-|-----|-------|-------|--------------|------------------|
-| 1 | Track laid | Green only | No | F1.3, F3 bridge, §3A.4–3A.5 |
-| 2 | Data pipeline | Green only | No | F1.1–F1.2, NF6 |
-| 3 | Motion | Green only | **Yes** | F2, §3A.2–3A.3, 3A.7 |
-| 4 | Interaction/UI | Green only | Yes | F3.2, F4.2–F4.3, F2.3 |
-| 5 | Breadth | + Purple, ARL, Pink, Yellow, **Gold**, Red | Yes | F4.1, NF1 (scale) |
-| 6 | Underground + polish | + MRT Blue; + **Orange (track only)** = full | Yes (Orange: track only) | F3.2 underground, F3.3, NF2 |
+| MVP | Theme | Lines | Trains move? | Key requirements | Status |
+|-----|-------|-------|--------------|------------------|--------|
+| 1 | Track laid | Green only | No | F1.3, F3 bridge, §3A.4–3A.5 | Delivered |
+| 2 | Data pipeline | Green only | No | F1.1–F1.2, NF6 | Delivered |
+| 3 | Motion | Green only | **Yes** | F2, §3A.2–3A.3, 3A.7 | Delivered |
+| 4 | Interaction/UI | Green only | Yes | F3.2, F4.2–F4.3, F2.3 | Delivered |
+| 5 | Breadth | + Purple, ARL, Pink, Yellow, **Gold**, Red (9 lines total) | Yes | F4.1, NF1 (scale) | Delivered 2026-07-31 — NF1 4/5 (300-vehicle scale target not yet reached by the real network's 171–172 measured peak; see §5) |
+| 6 | Underground + polish | + MRT Blue; + **Orange (track only)** = full | Yes (Orange: track only) | F3.2 underground, F3.3, NF2 | Not started |
 
 ---
 
@@ -434,7 +439,7 @@ The following are explicitly excluded from v1.0 and recorded for future consider
 
 - **Data pipeline:** Preprocessor output validated against source GTFS (trip counts, stop sequences, service calendars) with automated checks.
 - **Simulation correctness:** For a sampled set of trips, computed positions at known times match scheduled stop locations within tolerance; no train overshoots its terminus or renders while inactive.
-- **Performance:** Frame-rate and Wasm tick-time targets (NF1) verified on reference hardware with 300 active vehicles.
+- **Performance:** Frame-rate and Wasm tick-time targets (NF1) verified on reference hardware with 300 active vehicles. As of MVP 5, `npm run verify:perf` verifies tick-count sanity, tick time, no-truncation, and frame rate against the real network (all pass, 4/5); the 300-vehicle scale check itself is a known-failing gate against the current 9-line network's real 171–172-vehicle peak — see §5's NF1 status note.
 - **Bundle size:** CI check enforces the ≤ 5 MB initial-load budget (NF2).
 - **Cross-browser:** Smoke tests pass on the NF3 browser matrix.
 

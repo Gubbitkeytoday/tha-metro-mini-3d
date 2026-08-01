@@ -5,7 +5,9 @@
 
 /** f32 lanes per vehicle record. */
 export const VEHICLE_STRIDE = 8;
-export const MAX_VEHICLES = 512;
+/** Must mirror `MAX_VEHICLES` in rust-engine/sim-core/src/world.rs (source of
+ * truth) — they size the transferable frame buffer together (FRAME_BYTES). */
+export const MAX_VEHICLES = 1024;
 
 /** Floats / bytes per frame buffer. */
 export const FRAME_FLOATS = MAX_VEHICLES * VEHICLE_STRIDE;
@@ -89,6 +91,12 @@ export interface StationBoard {
   entries: BoardEntry[];
 }
 
+/** A walking connection to another route's station (contract §7). */
+export interface InterchangeRef {
+  route_idx: number;
+  station_idx: number;
+}
+
 /** Station with its ENU position, for click hit-testing. */
 export interface StationInfo {
   route_idx: number;
@@ -100,6 +108,7 @@ export interface StationInfo {
   x: number;
   y: number;
   z: number;
+  interchanges: InterchangeRef[];
 }
 
 /** Query request payloads (main -> worker). */
@@ -138,6 +147,13 @@ export type MainToWorker =
 export type WorkerToMain =
   | { kind: "ready"; validation: ValidationSummary }
   | { kind: "error"; message: string }
-  | { kind: "frame"; simEpochMs: number; count: number; buffer: ArrayBuffer } // transferred
+  | {
+      kind: "frame";
+      simEpochMs: number;
+      count: number;
+      evalMs: number;
+      truncated: boolean;
+      buffer: ArrayBuffer;
+    } // transferred
   | { kind: "queryResult"; id: number; result: SimQueryResult }
   | { kind: "queryError"; id: number; message: string };

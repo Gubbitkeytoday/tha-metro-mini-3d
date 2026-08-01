@@ -11,7 +11,7 @@
 use serde::Serialize;
 
 use crate::calendar::{previous_date, service_active_on};
-use crate::model::{PatternDoc, RouteDoc};
+use crate::model::{InterchangeRef, PatternDoc, RouteDoc};
 use crate::world::{SimWorld, STATE_DWELL, STATE_TRANSIT};
 
 /// One scheduled call, in seconds since the run's own service-day midnight.
@@ -95,6 +95,7 @@ pub struct StationInfo {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+    pub interchanges: Vec<InterchangeRef>,
 }
 
 /// Which service-day frame a run falls in for a given local date/time.
@@ -338,6 +339,7 @@ impl SimWorld {
                     x,
                     y,
                     z,
+                    interchanges: st.interchanges.clone(),
                 });
             }
         }
@@ -347,12 +349,54 @@ impl SimWorld {
 
 #[cfg(test)]
 mod tests {
+    use crate::model::{RouteDoc, StationDoc};
     use crate::world::SimWorld;
 
     /// Same synthetic feed the world tests use (A→B→C, plus a reverse run and
     /// a run that spills past midnight).
     fn world() -> SimWorld {
         SimWorld::from_doc(crate::world::tests_support::synthetic_doc()).unwrap()
+    }
+
+    /// Two routes: [0] normal, [1] geometry only (no patterns reference it).
+    fn world_with_track_only_route() -> SimWorld {
+        let mut doc = crate::world::tests_support::synthetic_doc();
+        doc.routes.push(RouteDoc {
+            gtfs_route_id: String::new(),
+            line_key: "orange".into(),
+            simulated: false,
+            name_en: "Orange".into(),
+            color_rgb: 0xF57C00,
+            track_xyz: vec![[0.0, 0.0, 15.0], [1000.0, 0.0, 15.0]],
+            track_arc_m: vec![0.0, 1000.0],
+            stations: vec![StationDoc {
+                gtfs_stop_id: "o1".into(),
+                code: "OR1".into(),
+                name_en: "Orange One".into(),
+                name_th: "ส้ม 1".into(),
+                arc_m: 0.0,
+                interchanges: Vec::new(),
+            }],
+        });
+        SimWorld::from_doc(doc).unwrap()
+    }
+
+    #[test]
+    fn a_track_only_route_has_an_empty_board_not_a_missing_one() {
+        // A rendered-but-unsimulated route must answer queries, or the UI
+        // cannot tell "no service" from "bad index" and shows an error card.
+        let world = world_with_track_only_route();
+        let board = world.station_board(1, 0, 20_260_731, 43_200.0, 8);
+        let board = board.expect("track-only routes must still resolve indices");
+        assert!(board.entries.is_empty());
+        assert_eq!(board.route_idx, 1);
+    }
+
+    #[test]
+    fn a_track_only_route_still_reports_its_stations() {
+        let world = world_with_track_only_route();
+        let stations = world.stations();
+        assert!(stations.iter().any(|s| s.route_idx == 1), "stations feed click picking");
     }
 
     const WED: u32 = 20260722;

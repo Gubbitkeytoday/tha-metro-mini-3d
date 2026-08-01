@@ -1,4 +1,4 @@
-//! Binary cache model — `green-line.tmb` (TMB = Thai Metro Binary).
+//! Binary cache model — `network.tmb` (TMB = Thai Metro Binary).
 //!
 //! Serialized with bincode 2 (serde integration, standard config). Exact
 //! field order matters; see docs/ENGINE_CONTRACT.md §2.
@@ -6,17 +6,17 @@
 use serde::{Deserialize, Serialize};
 
 pub const TMB_MAGIC: u32 = 0x544D_4231; // "TMB1"
-pub const TMB_VERSION: u16 = 1;
+pub const TMB_VERSION: u16 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CacheDoc {
     pub magic: u32,           // TMB_MAGIC
-    pub version: u16,         // 1
+    pub version: u16,         // 2
     pub feed_version: String, // "20260729"
     pub generated_unix: i64,
     pub origin_lng: f64, // MUST equal frontend ORIGIN_LNG_LAT
     pub origin_lat: f64, // (100.5332, 13.7456)
-    pub routes: Vec<RouteDoc>, // [0]=Sukhumvit(route_id 1), [1]=Silom(route_id 2)
+    pub routes: Vec<RouteDoc>, // order == src/data/network.json `lines` order
     pub services: Vec<ServiceDoc>,
     pub patterns: Vec<PatternDoc>,
     pub runs: Vec<RunDoc>, // sorted by (service_idx, start_sec)
@@ -24,9 +24,14 @@ pub struct CacheDoc {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RouteDoc {
-    pub gtfs_route_id: String, // "1" / "2"
+    pub gtfs_route_id: String, // "1" / "2" / "" for a track-only (unsimulated) line
+    /// Registry key from tools/lines.config.mjs; ties a cache route back to
+    /// its network.json geometry and its UI colour.
+    pub line_key: String,
+    /// false = track geometry only (no patterns, no runs, no trains).
+    pub simulated: bool,
     pub name_en: String,
-    pub color_rgb: u32, // 0x65B724 / 0x246B5B
+    pub color_rgb: u32, // always parse_hex_color(line.color) from the registry, e.g. 0x7CB342 (Sukhumvit)
     /// Track polyline in LOCAL ENU METERS relative to (origin_lng, origin_lat),
     /// Catmull-Rom resampled at ~10 m spacing by the preprocessor.
     /// x=east, y=north, z=up(+15.0). Same frame as src/map/coordinates.ts.
@@ -44,6 +49,15 @@ pub struct StationDoc {
     pub name_th: String,
     /// Station snapped ONTO the track polyline: arc-length position in meters.
     pub arc_m: f32,
+    /// Other routes' stations within walking distance. Symmetric, never
+    /// self-referential, computed by the preprocessor (contract §2).
+    pub interchanges: Vec<InterchangeRef>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct InterchangeRef {
+    pub route_idx: u8,
+    pub station_idx: u16,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

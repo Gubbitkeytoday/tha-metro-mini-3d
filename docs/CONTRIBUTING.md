@@ -15,7 +15,7 @@ Two documents are load-bearing — read the relevant one before writing code:
 
 ### Frontend
 
-Node.js 18+ is required. The built Wasm engine (`src/sim/pkg/`) and the binary timetable (`public/data/green-line.tmb`) are **committed**, so a plain frontend contributor needs no Rust toolchain.
+Node.js 18+ is required. The built Wasm engine (`src/sim/pkg/`) and the binary timetable (`public/data/network.tmb`) are **committed**, so a plain frontend contributor needs no Rust toolchain.
 
 ```bash
 npm install
@@ -29,18 +29,29 @@ npm run dev        # Vite dev server at http://localhost:5173
 | `npm run typecheck` | Type-check only |
 | `npm test` | Vitest unit tests (`vitest` for watch mode) |
 | `npm run preview` | Serve the production build |
-| `npm run data:fetch` | Regenerate `src/data/green-line.json` track geometry from OSM Overpass |
-| `npm run data:stations -- <gtfs-dir>` | Merge official station coordinates from an extracted Namtang GTFS feed |
+| `npm run data:fetch [lineKey ...]` | Regenerate `src/data/network.json` — every registry line's (`tools/lines.config.mjs`) track geometry + stations from OSM Overpass via `tools/fetch-network.mjs`; pass one or more line keys to fetch a subset |
+| `node tools/inspect-gtfs.mjs <gtfs-dir>` | Read-only: print every route in an extracted GTFS feed — the fastest way to populate a new registry entry |
 
-With the dev server running, two scripts assert behaviour against the live app (dev builds expose `window.__map` and `window.__sim` for exactly this):
+With the dev server running, several scripts assert behaviour against the live app (dev builds expose `window.__map` and `window.__sim` for exactly this):
 
 ```bash
 npm run verify:camera       # camera gestures, driven by real mouse events
 npm run verify:mvp4         # MVP 4 acceptance: selection, follow, inspector, board, scrub
+npm run verify:mvp5         # MVP 5 acceptance: line selector, multi-line simulation, interchanges, monorail geometry
 npm run verify:kinematics   # data-level motion assertions
 npm run verify:closeup      # camera-on-a-train screenshot
 npm run screenshot          # screenshots from several camera poses
 ```
+
+One more runs against a **production** build instead of the dev server — build and serve it first (`npm run build && npm run preview`), then in another shell:
+
+```bash
+npm run verify:perf         # NF1 acceptance: sim tick time, tick-count sanity, no truncation, frame rate, peak-concurrency scale
+```
+
+As of MVP 5, `verify:perf` passes 4 of its 5 sub-checks by design, not 5/5 — see [CLAUDE.md](../CLAUDE.md)'s "MVP 5's one disclosed gap" for why the peak-concurrency check is left failing on purpose.
+
+`tools/extract-stations.mjs` is **legacy, MVP 1/2-era only** and is not wired up as an npm script — it reads the old two-branch `src/data/green-line.json` schema, which no longer exists. `tools/fetch-network.mjs` now fetches station positions for every registry line itself. The file is left in the tree for history only; do not resurrect it as a pipeline step.
 
 ### Rust engine
 
@@ -60,7 +71,7 @@ The Cargo workspace has three members: `sim-core` (kinematics, geo math, model),
 
 ## How work is scoped
 
-The project ships as **vertical MVP slices**, not horizontal layers. Each MVP is a complete, demoable increment, and later ones assume earlier ones are done. MVP 1–4 are delivered (track, data pipeline, moving trains, interaction/UI); MVP 5–6 cover multi-line breadth and underground + polish. See the [roadmap](../README.md#roadmap) and SRS §7.
+The project ships as **vertical MVP slices**, not horizontal layers. Each MVP is a complete, demoable increment, and later ones assume earlier ones are done. MVP 1–5 are delivered (track, data pipeline, moving trains, interaction/UI, multi-line breadth); MVP 6 covers underground + polish. See the [roadmap](../README.md#roadmap) and SRS §7.
 
 If you are adding a feature, **place it in the right MVP** rather than building ahead of the current one.
 

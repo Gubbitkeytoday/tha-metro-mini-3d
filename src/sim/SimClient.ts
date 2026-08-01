@@ -87,6 +87,10 @@ export class SimClient {
     { resolve: (r: SimQueryResult) => void; reject: (e: Error) => void }
   >();
   private nextQueryId = 1;
+  /** Last 600 tick durations (~60 s at 10 Hz) for the NF1 harness. */
+  private evalSamples: number[] = [];
+  private maxCount = 0;
+  private everTruncated = false;
 
   constructor(private callbacks: SimClientCallbacks = {}) {
     this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
@@ -101,8 +105,8 @@ export class SimClient {
 
   private async load(): Promise<void> {
     try {
-      const res = await fetch("/data/green-line.tmb");
-      if (!res.ok) throw new Error(`green-line.tmb: HTTP ${res.status}`);
+      const res = await fetch("/data/network.tmb");
+      if (!res.ok) throw new Error(`network.tmb: HTTP ${res.status}`);
       const cache = await res.arrayBuffer();
       if (this.disposed) return;
       this.post({ kind: "init", cache }, [cache]);
@@ -122,6 +126,7 @@ export class SimClient {
         break;
       case "frame":
         this.acceptFrame(msg.simEpochMs, msg.count, msg.buffer);
+        this.recordEval(msg.evalMs, msg.count, msg.truncated);
         this.callbacks.onFrame?.(msg.simEpochMs, msg.count);
         break;
       case "queryResult":
@@ -215,6 +220,45 @@ export class SimClient {
   private recycle(frame: Frame): void {
     const buffer = frame.data.buffer as ArrayBuffer;
     this.post({ kind: "returnBuffer", buffer }, [buffer]);
+  }
+
+  // ---- NF1 perf stats -----------------------------------------------------
+
+  private recordEval(evalMs: number, count: number, truncated: boolean): void {
+    this.evalSamples.push(evalMs);
+    if (this.evalSamples.length > 600) this.evalSamples.shift();
+    if (count > this.maxCount) this.maxCount = count;
+    if (truncated) this.everTruncated = true;
+  }
+
+  /** Rolling-window sim-tick stats for the NF1 perf harness (verify:perf). */
+  getEvalStats(): {
+    samples: number;
+    meanMs: number;
+    p95Ms: number;
+    maxCount: number;
+    truncated: boolean;
+    maxVehicles: number;
+  } {
+    const s = [...this.evalSamples].sort((a, b) => a - b);
+    const mean = s.reduce((a, b) => a + b, 0) / (s.length || 1);
+    return {
+      samples: s.length,
+      meanMs: mean,
+      p95Ms: s[Math.floor(s.length * 0.95)] ?? 0,
+      maxCount: this.maxCount,
+      truncated: this.everTruncated,
+      maxVehicles: MAX_VEHICLES,
+    };
+  }
+
+  /** Clear the rolling window — call right before a measurement so stats
+   * reflect only what happens after this point (e.g. after warping to a
+   * specific sim time for the NF1 perf harness), not samples from page load. */
+  resetEvalStats(): void {
+    this.evalSamples = [];
+    this.maxCount = 0;
+    this.everTruncated = false;
   }
 
   // ---- clock -------------------------------------------------------------

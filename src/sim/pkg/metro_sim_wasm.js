@@ -26,6 +26,16 @@ export class Engine {
         return ret >>> 0;
     }
     /**
+     * True if the most recent `evaluate()` call hit `MAX_VEHICLES` and
+     * dropped vehicles (contract §3) — call right after `evaluate()`, before
+     * any other call that might re-evaluate the world.
+     * @returns {boolean}
+     */
+    last_truncated() {
+        const ret = wasm.engine_last_truncated(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
      * @param {Uint8Array} cache_bytes
      */
     constructor(cache_bytes) {

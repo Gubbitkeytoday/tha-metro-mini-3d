@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
-import type { StationBoard as StationBoardData } from "../sim/protocol";
+import { useEffect, useMemo, useState } from "react";
+import type { StationBoard as StationBoardData, StationInfo } from "../sim/protocol";
 import { activeSimClient } from "../sim/SimClient";
 import { formatCountdown, formatServiceSec } from "../sim/time";
 import { useAppStore } from "../stores/useAppStore";
+
+/** `${route_idx}:${station_idx}` — the natural key for cross-route station lookup. */
+function stationKey(routeIdx: number, stationIdx: number): string {
+  return `${routeIdx}:${stationIdx}`;
+}
 
 /**
  * Live timetable drawer for the selected station (F4.3): the next scheduled
@@ -20,6 +25,8 @@ export function StationBoard() {
   const selectedStation = useAppStore((s) => s.selectedStation);
   const selectStation = useAppStore((s) => s.selectStation);
   const selectRun = useAppStore((s) => s.selectRun);
+  const routes = useAppStore((s) => s.routes);
+  const stations = useAppStore((s) => s.stations);
   const [board, setBoard] = useState<StationBoardData | null>(null);
 
   const routeIdx = selectedStation?.routeIdx;
@@ -54,7 +61,15 @@ export function StationBoard() {
     };
   }, [routeIdx, stationIdx]);
 
+  const stationByKey = useMemo(() => {
+    const map = new Map<string, StationInfo>();
+    for (const s of stations) map.set(stationKey(s.route_idx, s.station_idx), s);
+    return map;
+  }, [stations]);
+
   if (!selectedStation) return null;
+
+  const info = stationByKey.get(stationKey(selectedStation.routeIdx, selectedStation.stationIdx));
 
   return (
     <div className="pointer-events-auto absolute right-4 top-4 flex max-h-[calc(100dvh-2rem)] w-72 flex-col overflow-hidden rounded-xl bg-white/90 shadow-lg backdrop-blur">
@@ -74,6 +89,21 @@ export function StationBoard() {
           ×
         </button>
       </div>
+
+      {info && info.interchanges.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 px-4 pb-2">
+          <span className="text-[10px] uppercase tracking-wide text-slate-400">Interchange</span>
+          {info.interchanges.map((ix) => (
+            <span
+              key={`${ix.route_idx}-${ix.station_idx}`}
+              className="rounded-full px-1.5 py-0.5 text-[10px] font-medium text-white"
+              style={{ background: routes[ix.route_idx]?.color ?? "#64748b" }}
+            >
+              {routes[ix.route_idx]?.name ?? `Route ${ix.route_idx}`}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         <p className="px-2 pb-1 text-[10px] uppercase tracking-wide text-slate-400">

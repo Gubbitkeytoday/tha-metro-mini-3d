@@ -21,6 +21,9 @@ declare module "*/pkg/metro_sim_wasm" {
     validation_json(): string;
     /** Writes up to MAX_VEHICLES stride-8 records into `out`, returns count. */
     evaluate(date_yyyymmdd: number, sec_of_day: number, out: Float32Array): number;
+    /** True if the most recent `evaluate()` hit MAX_VEHICLES and dropped
+     * vehicles — call right after `evaluate()`. */
+    last_truncated(): boolean;
 
     // UI-rate schedule queries (contract §7). Keep these in sync with
     // rust-engine/wasm/src/lib.rs — this fallback is what keeps `tsc` honest

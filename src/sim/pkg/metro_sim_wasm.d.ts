@@ -9,6 +9,12 @@ export class Engine {
      * Float32Array view of length >= MAX_VEHICLES*8). Returns vehicle count.
      */
     evaluate(date_yyyymmdd: number, sec_of_day: number, out: Float32Array): number;
+    /**
+     * True if the most recent `evaluate()` call hit `MAX_VEHICLES` and
+     * dropped vehicles (contract §3) — call right after `evaluate()`, before
+     * any other call that might re-evaluate the world.
+     */
+    last_truncated(): boolean;
     constructor(cache_bytes: Uint8Array);
     /**
      * `RunDetail` as JSON, or `"null"` when the run is not live at that time.
@@ -41,6 +47,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_engine_free: (a: number, b: number) => void;
     readonly engine_evaluate: (a: number, b: number, c: number, d: number, e: number, f: any) => number;
+    readonly engine_last_truncated: (a: number) => number;
     readonly engine_new: (a: number, b: number) => [number, number, number];
     readonly engine_run_detail_json: (a: number, b: number, c: number, d: number) => [number, number];
     readonly engine_station_board_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];

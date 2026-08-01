@@ -1,8 +1,8 @@
 import * as THREE from "three";
 import { Line2 } from "three/addons/lines/Line2.js";
-import { LineGeometry } from "three/addons/lines/LineGeometry.js";
+import { LineGeometry as ThreeLineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
-import type { LineBranch } from "../types";
+import type { LineGeometry, Structure } from "../types";
 import { lngLatAltToLocal } from "./coordinates";
 
 /**
@@ -13,14 +13,31 @@ import { lngLatAltToLocal } from "./coordinates";
  * heading changes stay continuous at curve nodes (SRS §F1.3).
  */
 
-const DECK_WIDTH_M = 9;
-const DECK_DEPTH_M = 2;
+/**
+ * Deck cross-section per structure type. Elevated keeps MVP 1's 9 m × 2 m
+ * viaduct box; at-grade is a shallow ballast slab (a 2 m box at +0.5 m would
+ * sink through the ground plane); `monorail` is the narrow straddle beam used
+ * by the Pink/Yellow/Gold guideways.
+ */
+export const DECK_PROFILE: Record<Structure | "monorail", { widthM: number; depthM: number }> = {
+  elevated: { widthM: 9, depthM: 2 },
+  atGrade: { widthM: 8, depthM: 0.5 },
+  underground: { widthM: 9, depthM: 2 },
+  monorail: { widthM: 5, depthM: 1.6 },
+};
+
+/** Monorail/APM guideways are beams, not viaducts, whatever their altitude. */
+function profileFor(line: LineGeometry) {
+  const beam = line.vehicleType === "monorail" || line.vehicleType === "apm";
+  return beam ? DECK_PROFILE.monorail : DECK_PROFILE[line.structure];
+}
+
 /** Resample interval along the smoothed curve. */
 const SAMPLE_SPACING_M = 12;
 
 const UP = new THREE.Vector3(0, 0, 1);
 
-function toLocalVec3(points: LineBranch["track"]): THREE.Vector3[] {
+function toLocalVec3(points: LineGeometry["track"]): THREE.Vector3[] {
   return points.map((p) => new THREE.Vector3(...lngLatAltToLocal(p)));
 }
 
@@ -28,14 +45,15 @@ function toLocalVec3(points: LineBranch["track"]): THREE.Vector3[] {
  * Sweep a rectangular viaduct-deck profile along the smoothed track curve.
  * Produces one indexed BufferGeometry (top, bottom and both side faces).
  */
-export function buildTrackDeck(branch: LineBranch): THREE.Mesh {
-  const controlPoints = toLocalVec3(branch.track);
+export function buildTrackDeck(line: LineGeometry): THREE.Mesh {
+  const controlPoints = toLocalVec3(line.track);
   const curve = new THREE.CatmullRomCurve3(controlPoints, false, "centripetal");
   const length = curve.getLength();
   const samples = Math.max(controlPoints.length, Math.round(length / SAMPLE_SPACING_M));
 
   const centers = curve.getSpacedPoints(samples);
-  const halfW = DECK_WIDTH_M / 2;
+  const { widthM, depthM } = profileFor(line);
+  const halfW = widthM / 2;
 
   // 4 profile corners per sample: topLeft, topRight, bottomRight, bottomLeft
   const positions = new Float32Array(centers.length * 4 * 3);
@@ -54,8 +72,8 @@ export function buildTrackDeck(branch: LineBranch): THREE.Mesh {
     const corners = [
       [c.x - side.x, c.y - side.y, c.z],
       [c.x + side.x, c.y + side.y, c.z],
-      [c.x + side.x, c.y + side.y, c.z - DECK_DEPTH_M],
-      [c.x - side.x, c.y - side.y, c.z - DECK_DEPTH_M],
+      [c.x + side.x, c.y + side.y, c.z - depthM],
+      [c.x - side.x, c.y - side.y, c.z - depthM],
     ];
     for (let k = 0; k < 4; k++) positions.set(corners[k], (i * 4 + k) * 3);
   }
@@ -77,11 +95,11 @@ export function buildTrackDeck(branch: LineBranch): THREE.Mesh {
   geometry.computeVertexNormals();
 
   const material = new THREE.MeshLambertMaterial({
-    color: new THREE.Color(branch.color),
+    color: new THREE.Color(line.color),
     side: THREE.DoubleSide,
   });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.name = `track-${branch.name}`;
+  mesh.name = `track-${line.key}`;
   return mesh;
 }
 
@@ -91,8 +109,8 @@ export function buildTrackDeck(branch: LineBranch): THREE.Mesh {
  * keeps the route readable at any zoom. Its material needs the drawing-buffer
  * resolution each frame — the layer updates it in render().
  */
-export function buildTrackLine(branch: LineBranch): { line: Line2; material: LineMaterial } {
-  const controlPoints = toLocalVec3(branch.track);
+export function buildTrackLine(line: LineGeometry): { line: Line2; material: LineMaterial } {
+  const controlPoints = toLocalVec3(line.track);
   const curve = new THREE.CatmullRomCurve3(controlPoints, false, "centripetal");
   const samples = Math.max(controlPoints.length, Math.round(curve.getLength() / SAMPLE_SPACING_M));
   // hover slightly above the deck top to avoid z-fighting
@@ -100,29 +118,31 @@ export function buildTrackLine(branch: LineBranch): { line: Line2; material: Lin
     .getSpacedPoints(samples)
     .flatMap((p) => [p.x, p.y, p.z + 0.6]);
 
-  const geometry = new LineGeometry();
+  const geometry = new ThreeLineGeometry();
   geometry.setPositions(positions);
   const material = new LineMaterial({
-    color: new THREE.Color(branch.color).getHex(),
+    color: new THREE.Color(line.color).getHex(),
     linewidth: 3, // pixels (worldUnits: false is the default)
   });
-  const line = new Line2(geometry, material);
-  line.computeLineDistances();
-  line.name = `trackline-${branch.name}`;
-  return { line, material };
+  const line2 = new Line2(geometry, material);
+  line2.computeLineDistances();
+  line2.name = `trackline-${line.key}`;
+  return { line: line2, material };
 }
 
 /**
  * Station markers as two InstancedMeshes (discs at deck level + support
- * poles to the ground) across all provided branches — a handful of draw
- * calls total (SRS §3A.5 instancing pattern).
+ * poles to the ground) per line — `ThreeLayer.ts` calls this once per
+ * registered line, so at today's 9-line network that's ~18 draw calls
+ * total, not a handful (SRS §3A.5 instancing pattern; still O(lines), not
+ * O(stations)).
  */
-export function buildStationMarkers(branches: LineBranch[]): THREE.Object3D {
+export function buildStationMarkers(lines: LineGeometry[]): THREE.Object3D {
   const group = new THREE.Group();
   group.name = "stations";
 
-  const stations = branches.flatMap((b) =>
-    b.stations.map((s) => ({ ...s, color: new THREE.Color(b.color) })),
+  const stations = lines.flatMap((line) =>
+    line.stations.map((s) => ({ ...s, color: new THREE.Color(line.color) })),
   );
   if (stations.length === 0) return group;
 

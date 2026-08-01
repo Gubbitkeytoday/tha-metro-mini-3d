@@ -38,6 +38,13 @@ impl Engine {
     // These return JSON, which is fine because they are called on selection or
     // at ~1 Hz — never on the frame path. Do not call them per frame.
 
+    /// True if the most recent `evaluate()` call hit `MAX_VEHICLES` and
+    /// dropped vehicles (contract §3) — call right after `evaluate()`, before
+    /// any other call that might re-evaluate the world.
+    pub fn last_truncated(&self) -> bool {
+        self.world.last_truncated()
+    }
+
     /// `RunDetail` as JSON, or `"null"` when the run is not live at that time.
     pub fn run_detail_json(&self, run_idx: u32, date_yyyymmdd: u32, sec_of_day: f64) -> String {
         match self.world.run_detail(run_idx, date_yyyymmdd, sec_of_day) {
