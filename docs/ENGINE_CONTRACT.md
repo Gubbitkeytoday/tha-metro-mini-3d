@@ -65,7 +65,7 @@ pub const TMB_MAGIC: u32 = 0x544D_4231; // "TMB1"
 #[derive(Serialize, Deserialize)]
 pub struct CacheDoc {
     pub magic: u32,              // TMB_MAGIC
-    pub version: u16,            // 2 (bumped in MVP 5 Task 4: RouteDoc gained line_key + simulated)
+    pub version: u16,            // 3 (bumped in MVP 6 Task 1: InterchangeRef.route_idx widened u8 -> u16)
     pub feed_version: String,    // "20260729"
     pub generated_unix: i64,
     pub origin_lng: f64,         // MUST equal frontend ORIGIN_LNG_LAT
@@ -115,7 +115,8 @@ pub struct StationDoc {
 
 #[derive(Serialize, Deserialize)]
 pub struct InterchangeRef {
-    pub route_idx: u8,
+    pub route_idx: u16,          // u16 as of MVP 6 Task 1 (was u8; unchecked
+                                  // narrowing would silently wrap past 256 routes)
     pub station_idx: u16,
 }
 
@@ -171,10 +172,19 @@ Deserialized by the preprocessor as (`rust-engine/preprocessor/src/main.rs`,
 ```rust
 struct TrackFile {
     lines: Vec<LineGeometry>,
-    /// GTFS stop_id pairs for interchange walkways the 300 m auto-link
-    /// radius cannot reach — see "Interchange linking" below. Optional,
-    /// defaults to empty.
-    interchange_overrides: Vec<[String; 2]>,
+    /// Interchange walkways the 300 m auto-link radius cannot reach — see
+    /// "Interchange linking" below. Line-qualified as of MVP 6 Task 1 (was a
+    /// bare [String; 2] stop_id pair): a bare pair is only safe while that id
+    /// resolves to exactly two stations network-wide, and the Namtang feed
+    /// reuses stop ids across operators. Optional, defaults to empty.
+    interchange_overrides: Vec<InterchangeOverride>,
+}
+
+struct InterchangeOverride {
+    a_line: String, // registry line key, e.g. "purple"
+    a_stop: String, // gtfs_stop_id on that line
+    b_line: String,
+    b_stop: String,
 }
 
 struct LineGeometry {
@@ -261,9 +271,12 @@ implemented against it.
   within `INTERCHANGE_RADIUS_M = 300.0` meters of each other gets a symmetric
   `InterchangeRef` on both `StationDoc.interchanges` (§2, never
   self-referential — same route never links to itself). `interchange_overrides`
-  (§2.1, GTFS stop_id pairs) adds links the radius can't reach — e.g. two
-  platforms of the same interchange 555 m apart that happen to share one
-  GTFS `stop_id` on both sides.
+  (§2.1, line-qualified `{a_line, a_stop, b_line, b_stop}` as of MVP 6 Task 1)
+  adds links the radius can't reach — e.g. two platforms of the same
+  interchange 555 m apart that happen to share one GTFS `stop_id` on both
+  sides. Line-qualifying prevents a stop id shared by three or more routes
+  (the Namtang feed does this) from silently widening one intended pair into
+  every pairwise combination.
 - Writes `--report` JSON: `{stations, patterns, runs, services, bytes,
   gzip_bytes, per_route: [...], peak_concurrent, peak_concurrent_time,
   peak_concurrent_date, peak_concurrent_weekday, peak_concurrent_weekend}` —
