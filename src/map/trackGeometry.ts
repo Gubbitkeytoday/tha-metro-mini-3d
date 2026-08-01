@@ -44,51 +44,105 @@ function toLocalVec3(points: TrackPoint[]): THREE.Vector3[] {
 }
 
 /**
- * Cut a track polyline into maximal same-structure runs.
+ * Split a track polyline into maximal same-structure groups, with NO
+ * padding — every point in every group is genuinely native to it (never a
+ * point borrowed from a neighbour). This is the authoritative source of
+ * "what structure does the i-th run actually represent": `splitByStructure`
+ * pads these groups into runs of 2+ points for rendering, but a padded run
+ * can gain its extra point from either end (see below), so `run[0]` is not
+ * reliably native there — `groupByStructure`'s output, one group per run in
+ * the same order, is what `buildTrackDeck` reads structure from instead.
+ */
+function groupByStructure(track: TrackPoint[]): TrackPoint[][] {
+  const groups: TrackPoint[][] = [];
+  let start = 0;
+  for (let i = 1; i <= track.length; i++) {
+    if (i === track.length || track[i][3] !== track[i - 1][3]) {
+      groups.push(track.slice(start, i));
+      start = i;
+    }
+  }
+  return groups;
+}
+
+/**
+ * Cut a track polyline into maximal same-structure runs, padding any run
+ * that collapses to a single point up to the 2-point minimum
+ * CatmullRomCurve3 needs — and so its portal shares a real vertex with a
+ * neighbour instead of leaving a gap.
  *
- * A run of 2+ points needs no help: sweepDeck curves through it on its own,
- * and the next run picks up cleanly at the very next original point, so
- * there's no gap to begin with. A run that collapses to a single point (its
- * structure holds for only one sample) borrows one point from the
- * neighbouring run — CatmullRomCurve3 throws below 2 points, and this also
- * gives that portal a shared vertex instead of a hole between the last
- * sample of one structure and the first of the next.
+ * Padding always prefers a *genuinely spare* point: a neighbour that still
+ * has an unborrowed point of its own (i.e. a group of 2+ points, which
+ * never itself needs padding). A single-point group borrows from the
+ * nearest such neighbour, chaining the loan across however many
+ * consecutive single-point groups sit in between — e.g. for
+ * `[e,e,e,u,a]` (a 3-point elevated group, then two lone underground/
+ * at-grade points), the underground run borrows `e`'s spare point
+ * (`[e,u]`), and the at-grade run then borrows the underground run's own
+ * point rather than reaching past it (`[u,a]`) — nothing is duplicated.
+ * A borrow rule keyed on *position* (e.g. "only the last run ever borrows
+ * backward") gets this wrong: it can't see that an earlier, non-adjacent
+ * group has spare capacity, and ends up duplicating a point that a
+ * same-pass neighbour already borrowed instead.
  *
- * Only the very last run can ever borrow *backward* (prepending its
- * predecessor's last point) — every other short run borrows *forward*
- * (appending its successor's first point), because path order forbids
- * putting a later point before an earlier one. That asymmetry is why the
- * padding pass below walks **right to left**: the last run's backward
- * borrow always reads its predecessor's still-untouched, genuinely native
- * last point (nothing to its left has been visited yet), and any earlier
- * run's forward borrow then reads whatever its successor already settled
- * on. A left-to-right pass gets this backwards — an earlier run pads
- * itself first (mutating in place), so by the time the last run looks left
- * for its "predecessor's last point" it reads that mutation instead of the
- * predecessor's own point, producing a degenerate self-duplicated run (see
- * the regression tests below the two-segment case this bit).
+ * The one shape with no spare point anywhere is a track that is one
+ * unbroken chain of single-point groups start to finish (every point's
+ * structure differs from both neighbours'). There, nothing is truly
+ * spare — with N single points and N runs each needing 2, and path order
+ * fixed, at least one run is provably forced to reuse a point twice. That
+ * remaining run is resolved by chaining forward from the track's very
+ * first point (the one point nothing else competes for); the trailing
+ * run's own padding then necessarily reads a point some earlier run in
+ * the chain already borrowed to pad itself.
  *
- * `buildTrackDeck` relies on this ordering: for every run except the last,
- * `run[0]` is guaranteed native (never a borrowed point), so it can read
- * `run[0][3]` for the run's true structure; the last run instead reads
- * `run[run.length - 1][3]`, which is native there for the same reason.
+ * Because a padded run's extra point can land at either end depending on
+ * which side the donor was found, callers that need a run's true
+ * structure must not infer it from the run's own points (see
+ * `groupByStructure`, which `buildTrackDeck` uses instead).
  */
 export function splitByStructure(track: TrackPoint[]): TrackPoint[][] {
   if (track.length < 2) return [];
 
-  const runs: TrackPoint[][] = [];
-  let start = 0;
-  for (let i = 1; i <= track.length; i++) {
-    if (i === track.length || track[i][3] !== track[i - 1][3]) {
-      runs.push(track.slice(start, i));
-      start = i;
-    }
-  }
+  const groups = groupByStructure(track);
+  const runs: TrackPoint[][] = groups.map((g) => g.slice());
 
-  for (let i = runs.length - 1; i >= 0; i--) {
-    if (runs[i].length >= 2) continue;
-    if (i + 1 < runs.length) runs[i] = [...runs[i], runs[i + 1][0]];
-    else runs[i] = [runs[i - 1][runs[i - 1].length - 1], ...runs[i]];
+  let i = 0;
+  while (i < groups.length) {
+    if (groups[i].length >= 2) {
+      i++;
+      continue;
+    }
+    // [i, j) is a maximal chain of single-point groups. groups[i - 1] (if
+    // it exists) and groups[j] (if it exists) bound it and are guaranteed
+    // to have 2+ points — the chain is maximal, so neither could itself be
+    // a single-point group without having been folded into this chain.
+    let j = i;
+    while (j < groups.length && groups[j].length < 2) j++;
+
+    if (i > 0) {
+      // A spare point exists on the left: chain the loan in from there.
+      for (let k = i; k < j; k++) {
+        const donor = k === i ? groups[i - 1] : groups[k - 1];
+        runs[k] = [donor[donor.length - 1], ...runs[k]];
+      }
+    } else if (j < groups.length) {
+      // No spare point on the left (this chain starts the track), but
+      // there's one on the right — mirror the above from that side.
+      for (let k = j - 1; k >= i; k--) {
+        const donor = k === j - 1 ? groups[j] : groups[k + 1];
+        runs[k] = [...runs[k], donor[0]];
+      }
+    } else {
+      // No spare point on either side — the whole track is this one
+      // chain. Chain forward from the track's first point; the last run's
+      // own padding then reads whatever the run before it already
+      // settled on, which is the one genuinely unavoidable duplication.
+      for (let k = j - 1; k >= i; k--) {
+        if (k + 1 < j) runs[k] = [...runs[k], runs[k + 1][0]];
+        else runs[k] = [runs[k - 1][runs[k - 1].length - 1], ...runs[k]];
+      }
+    }
+    i = j;
   }
 
   return runs;
@@ -171,13 +225,13 @@ export function buildTrackDeck(line: LineGeometry): THREE.Group {
   group.name = `track-${line.key}`;
   const color = new THREE.Color(line.color);
   const runs = splitByStructure(line.track);
+  // A run's own points can include one borrowed from a neighbour (see
+  // splitByStructure), so its true structure isn't reliably readable off
+  // the run itself — groupByStructure's unpadded groups are, one per run,
+  // in the same order.
+  const structures = groupByStructure(line.track).map((g) => g[0][3]);
   for (const [i, run] of runs.entries()) {
-    // run[0] is native to every run EXCEPT the last one — splitByStructure
-    // only ever pads a short run by prepending a borrowed point (path order
-    // forbids appending a point that comes earlier in the track), and only
-    // the last run can be short with nothing after it to append instead. See
-    // splitByStructure's doc comment for the full reasoning.
-    const structure = (i === runs.length - 1 ? run[run.length - 1] : run[0])[3];
+    const structure = structures[i];
     const mesh = sweepDeck(run, profileFor(line, structure), color);
     mesh.name = `track-${line.key}-${structure}-${i}`;
     mesh.userData.structure = structure;

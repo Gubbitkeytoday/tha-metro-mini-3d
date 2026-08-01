@@ -21,6 +21,21 @@ describe("deck profile by structure", () => {
 
 const p = (lng: number, s: TrackPoint[3]): TrackPoint => [lng, 13.7, 0, s];
 
+const line = (track: TrackPoint[]): LineGeometry => ({
+  key: "test",
+  name: "Test Line",
+  nameTh: "สายทดสอบ",
+  color: "#ff0000",
+  structure: "elevated",
+  vehicleType: "heavy",
+  gtfsRouteId: null,
+  preRevenue: false,
+  relationId: 0,
+  osmName: "test",
+  track,
+  stations: [],
+});
+
 describe("splitByStructure", () => {
   it("returns one run for a uniform line", () => {
     const runs = splitByStructure([p(0, "elevated"), p(1, "elevated"), p(2, "elevated")]);
@@ -106,21 +121,6 @@ describe("splitByStructure — boundary vertex at the very start/end (regression
 });
 
 describe("buildTrackDeck structure labelling (regression)", () => {
-  const line = (track: TrackPoint[]): LineGeometry => ({
-    key: "test",
-    name: "Test Line",
-    nameTh: "สายทดสอบ",
-    color: "#ff0000",
-    structure: "elevated",
-    vehicleType: "heavy",
-    gtfsRouteId: null,
-    preRevenue: false,
-    relationId: 0,
-    osmName: "test",
-    track,
-    stations: [],
-  });
-
   it("labels a trailing single-point run with its OWN structure, not its predecessor's borrowed point", () => {
     const group = buildTrackDeck(
       line([p(0, "elevated"), p(1, "elevated"), p(2, "elevated"), p(3, "underground")]),
@@ -137,6 +137,103 @@ describe("buildTrackDeck structure labelling (regression)", () => {
     expect(group.children).toHaveLength(2);
     expect(group.children[0].userData.structure).toBe("underground");
     expect(group.children[1].userData.structure).toBe("elevated");
+  });
+});
+
+// Regression coverage for review round 2: a long (2+ point) run followed by
+// a CHAIN of 2+ consecutive single-point runs reaching the track's tail (or
+// start). Round 1's fix only special-cased "the last run borrows from its
+// immediate predecessor" — correct for a single trailing singleton, but for
+// a *chain* of them it can't see that a run two-or-more hops away (not its
+// immediate predecessor) still has a genuinely spare point, so it re-reads
+// an already-borrowed point instead and self-duplicates a run that didn't
+// need to be.
+describe("splitByStructure — a long run followed by a chain of singletons (regression)", () => {
+  it("threads the loan through a 2-singleton chain without duplicating any run", () => {
+    // e,e,e (long) | u (singleton) | a (singleton, trailing). The middle
+    // run must borrow from the long run's spare point, not from the
+    // trailing run — and the trailing run must then borrow from the
+    // middle run's own point, not re-read the long run past it.
+    const runs = splitByStructure([
+      p(0, "elevated"),
+      p(1, "elevated"),
+      p(2, "elevated"),
+      p(3, "underground"),
+      p(4, "atGrade"),
+    ]);
+    expect(runs).toHaveLength(3);
+    expect(runs[0]).toEqual([p(0, "elevated"), p(1, "elevated"), p(2, "elevated")]);
+    expect(runs[1]).toEqual([p(2, "elevated"), p(3, "underground")]);
+    expect(runs[2]).toEqual([p(3, "underground"), p(4, "atGrade")]);
+    // Neither singleton-derived run is a self-duplicate.
+    expect(runs[1][0]).not.toEqual(runs[1][1]);
+    expect(runs[2][0]).not.toEqual(runs[2][1]);
+  });
+
+  it("threads the loan through a longer chain bounded by long runs on both sides", () => {
+    // e,e (long) | u (singleton) | a (singleton) | e,e (long, reusing the
+    // "elevated" label as a separate, non-adjacent run).
+    const runs = splitByStructure([
+      p(0, "elevated"),
+      p(1, "elevated"),
+      p(2, "underground"),
+      p(3, "atGrade"),
+      p(4, "elevated"),
+      p(5, "elevated"),
+    ]);
+    expect(runs).toHaveLength(4);
+    expect(runs[0]).toEqual([p(0, "elevated"), p(1, "elevated")]);
+    expect(runs[1]).toEqual([p(1, "elevated"), p(2, "underground")]);
+    expect(runs[2]).toEqual([p(2, "underground"), p(3, "atGrade")]);
+    expect(runs[3]).toEqual([p(4, "elevated"), p(5, "elevated")]);
+    expect(runs[1][0]).not.toEqual(runs[1][1]);
+    expect(runs[2][0]).not.toEqual(runs[2][1]);
+    // The chain borrows in from the long run on its LEFT (index 0 wins
+    // when a gap has a long neighbour on both sides — an arbitrary but
+    // consistent choice): run 0 -> run 1 -> run 2 connect edge to edge.
+    // Run 3 (the long run on the right) needed no padding at all, so it
+    // stays untouched and does NOT share a vertex with run 2 — same as
+    // any other clean split (see "splits where the structure changes"
+    // above), because both sides already had enough points of their own.
+    expect(runs[0].at(-1)).toEqual(runs[1][0]);
+    expect(runs[1].at(-1)).toEqual(runs[2][0]);
+    expect(runs[2].at(-1)).not.toEqual(runs[3][0]);
+  });
+
+  it("labels every run in a threaded chain with its own true structure", () => {
+    const group = buildTrackDeck(
+      line([
+        p(0, "elevated"),
+        p(1, "elevated"),
+        p(2, "elevated"),
+        p(3, "underground"),
+        p(4, "atGrade"),
+      ]),
+    );
+    expect(group.children).toHaveLength(3);
+    expect(group.children[0].userData.structure).toBe("elevated");
+    expect(group.children[1].userData.structure).toBe("underground");
+    expect(group.children[2].userData.structure).toBe("atGrade");
+  });
+
+  it("pins the genuinely-irreducible all-singleton case: the middle run alone self-duplicates", () => {
+    // e | u | a — every run a single point, no long run anywhere to borrow
+    // a spare point from. Proven irreducible (see splitByStructure's doc
+    // comment): something must duplicate. Pinned so a future refactor that
+    // changes *which* run ends up degenerate doesn't slip by unnoticed —
+    // the outer two runs (which legitimately connect the track's own first
+    // and last points to the middle) must stay clean.
+    const runs = splitByStructure([p(0, "elevated"), p(1, "underground"), p(2, "atGrade")]);
+    expect(runs).toHaveLength(3);
+    expect(runs[0]).toEqual([p(0, "elevated"), p(1, "underground")]);
+    expect(runs[1][0]).toEqual(runs[1][1]); // the forced self-duplicate
+    expect(runs[2]).toEqual([p(1, "underground"), p(2, "atGrade")]);
+
+    const group = buildTrackDeck(line([p(0, "elevated"), p(1, "underground"), p(2, "atGrade")]));
+    expect(group.children).toHaveLength(3);
+    expect(group.children[0].userData.structure).toBe("elevated");
+    expect(group.children[1].userData.structure).toBe("underground");
+    expect(group.children[2].userData.structure).toBe("atGrade");
   });
 });
 
