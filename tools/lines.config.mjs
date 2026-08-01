@@ -100,8 +100,12 @@ export const LINES = [
     key: "yellow",
     name: "MRT Yellow Line",
     nameTh: "สายสีเหลือง",
-    // Feed route_color (FFE547) differs from the conventional #FBC02D swatch.
-    color: "#FFE547",
+    // Feed route_color (FFE547) is a very pale yellow that reads as nearly
+    // invisible against the basemap's tan/beige — unlike the other lines'
+    // feed-vs-conventional mismatches (a few degrees of hue/saturation), this
+    // one is a legibility problem, not just a stylistic difference. Uses the
+    // conventional MRT Yellow swatch instead.
+    color: "#FBC02D",
     structure: "elevated",
     vehicleType: "monorail",
     gtfsRouteId: "2224",
