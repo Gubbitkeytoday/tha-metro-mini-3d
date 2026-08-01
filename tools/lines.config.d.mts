@@ -31,8 +31,18 @@ export interface InterchangeOverride {
   bStop: string;
 }
 
+export interface WayTags {
+  tunnel?: string;
+  bridge?: string;
+  layer?: string;
+}
+
 export const STRUCTURE_ALTITUDE_M: Record<"elevated" | "atGrade" | "underground", number>;
 export const VEHICLE_TYPES: string[];
 export const LINES: LineConfig[];
 export const INTERCHANGE_OVERRIDES: InterchangeOverride[];
 export function assertRegistryValid(lines?: LineConfig[]): void;
+export function structureOfWay(
+  tags: WayTags,
+  fallback?: "elevated" | "atGrade" | "underground",
+): "elevated" | "atGrade" | "underground";

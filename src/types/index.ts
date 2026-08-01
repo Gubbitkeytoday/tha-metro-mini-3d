@@ -33,6 +33,8 @@ export interface LineGeometry {
   vehicleType: VehicleType;
   /** null = track geometry only, never simulated (pre-revenue or absent feed). */
   gtfsRouteId: string | null;
+  /** Under construction / not yet in revenue service — rendered distinctly. */
+  preRevenue: boolean;
   relationId: number;
   osmName: string;
   track: TrackPoint[];
