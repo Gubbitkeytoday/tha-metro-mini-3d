@@ -67,7 +67,7 @@ struct LineGeometry {
     color: String,
     /// None = track geometry only; rendered, never simulated.
     gtfs_route_id: Option<String>,
-    track: Vec<[f64; 3]>,
+    track: Vec<TrackVertex>,
     stations: Vec<NetworkStation>,
     /// GTFS stop_ids to drop from this line's simulation entirely (and any
     /// trip that serves one, taking its whole pattern with it) — for a stop
@@ -94,6 +94,12 @@ struct LineGeometry {
     #[serde(default)]
     allow_large_snap_stop_ids: Vec<String>,
 }
+
+/// One track vertex from network.json: [lng, lat, altitude_m, structure].
+/// The structure tag is a rendering concern (src/map/structure.ts); the
+/// preprocessor needs only the altitude, but must tolerate the 4th element.
+#[derive(Deserialize)]
+struct TrackVertex(f64, f64, f64, #[serde(default)] String);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -282,7 +288,7 @@ fn run() -> Result<(), String> {
         let ctrl: Vec<[f64; 3]> = line
             .track
             .iter()
-            .map(|&[lng, lat, alt]| proj.project(lng, lat, alt))
+            .map(|v| proj.project(v.0, v.1, v.2))
             .collect();
         let poly = spline::catmull_rom_resample(&ctrl, RESAMPLE_SPACING_M)?;
         let arcs = spline::cumulative_arc(&poly);
@@ -871,6 +877,15 @@ mod tests {
         // The invariant the whole plan rests on: routes[i] is lines[i].
         let ids: Vec<&str> = file.lines.iter().map(|l| l.gtfs_route_id.as_deref().unwrap()).collect();
         assert_eq!(ids, vec!["1", "9"]);
+    }
+
+    #[test]
+    fn accepts_a_four_element_track_vertex() {
+        let json = r#"[[100.5,13.7,15.0,"elevated"],[100.51,13.7,-18.0,"underground"]]"#;
+        let track: Vec<TrackVertex> = serde_json::from_str(json).unwrap();
+        assert_eq!(track.len(), 2);
+        assert_eq!(track[1].2, -18.0);
+        assert_eq!(track[1].3, "underground");
     }
 
     #[test]
