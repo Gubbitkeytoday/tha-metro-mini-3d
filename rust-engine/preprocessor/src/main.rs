@@ -95,6 +95,26 @@ struct NetworkStation {
     position: [f64; 3],
 }
 
+/// route_id -> index into `lines`. Errors on a duplicate instead of silently
+/// keeping the last one: a duplicate would stamp every trip on that route with
+/// the wrong route_idx (wrong track, wrong colour, wrong station table), and
+/// assertRegistryValid() only runs inside fetch-network.mjs — the preprocessor
+/// consumes committed network.json and is routinely run without re-fetching.
+fn build_route_idx_by_gtfs_id(
+    lines: &[(String, Option<String>)],
+) -> Result<HashMap<String, usize>, String> {
+    let mut map = HashMap::new();
+    for (i, (key, route_id)) in lines.iter().enumerate() {
+        let Some(id) = route_id else { continue };
+        if let Some(prev) = map.insert(id.clone(), i) {
+            return Err(format!(
+                "duplicate gtfsRouteId '{id}': lines[{prev}] and lines[{i}] ('{key}') both claim it"
+            ));
+        }
+    }
+    Ok(map)
+}
+
 /// `#RRGGBB` from the registry -> the u32 the cache and UI use.
 fn parse_hex_color(s: &str) -> Result<u32, String> {
     let digits = s.trim_start_matches('#');
@@ -479,17 +499,13 @@ fn run() -> Result<(), String> {
     }
 
     // ---- Patterns ----------------------------------------------------------
-    let mut route_idx_by_gtfs_id: HashMap<&str, usize> = HashMap::new();
-    for (i, l) in track_file.lines.iter().enumerate() {
-        if let Some(id) = l.gtfs_route_id.as_deref() {
-            if let Some(prev) = route_idx_by_gtfs_id.insert(id, i) {
-                return Err(format!(
-                    "duplicate gtfsRouteId '{id}' on lines[{prev}] and lines[{i}] \
-                     — every trip for this route would silently resolve to lines[{i}]"
-                ));
-            }
-        }
-    }
+    let route_idx_by_gtfs_id = build_route_idx_by_gtfs_id(
+        &track_file
+            .lines
+            .iter()
+            .map(|l| (l.key.clone(), l.gtfs_route_id.clone()))
+            .collect::<Vec<_>>(),
+    )?;
     let mut patterns = Vec::new();
     let mut pattern_idx_by_trip: HashMap<String, u16> = HashMap::new();
     for trip in &trips {
@@ -841,6 +857,33 @@ mod tests {
              "vehicleType":"commuter","gtfsRouteId":"9","track":[[100.6,13.8,0.5],[100.61,13.8,0.5]],
              "stations":[{"id":"s2","name":"S2","nameTh":"ส2","code":"B1","position":[100.6,13.8,0.5]}]}
         ]}"##
+    }
+
+    #[test]
+    fn rejects_two_lines_claiming_the_same_gtfs_route_id() {
+        // Silent misrouting: HashMap::collect keeps the LAST duplicate, so every
+        // trip on the shared id would be stamped with the wrong route_idx and
+        // rendered on the wrong line's track.
+        let lines = vec![
+            ("a".to_string(), Some("1".to_string())),
+            ("b".to_string(), Some("1".to_string())),
+        ];
+        let err = build_route_idx_by_gtfs_id(&lines).unwrap_err();
+        assert!(err.contains("duplicate gtfsRouteId '1'"), "got: {err}");
+    }
+
+    #[test]
+    fn accepts_multiple_track_only_lines() {
+        // Several lines may legitimately have gtfsRouteId: null (Orange,
+        // Purple Phase 2) — null is not a duplicate.
+        let lines = vec![
+            ("a".to_string(), None),
+            ("b".to_string(), None),
+            ("c".to_string(), Some("1".to_string())),
+        ];
+        let map = build_route_idx_by_gtfs_id(&lines).unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["1"], 2);
     }
 
     #[test]
