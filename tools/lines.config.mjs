@@ -156,7 +156,15 @@ export const LINES = [
     nameTh: "สายสีแดงเข้ม",
     // Feed route_color (e10506) differs from the conventional #B71C1C swatch.
     color: "#E10506",
-    structure: "elevated",
+    // Default (untagged-way fallback) is atGrade, not elevated: SRT commuter
+    // rail is fundamentally ground-level track with elevated viaduct sections
+    // through the city core near Bang Sue Grand Station, the opposite mix of
+    // every other (fully-elevated) line in this registry. Verified against
+    // real OSM way tags (2026-08-01): of 23 track ways, 17 carry an explicit
+    // bridge/positive-layer tag (elevated) and the other 6 carry neither
+    // (4 bare, 2 embankment=yes) — embankment is raised earthwork, not a
+    // viaduct, so it reads as atGrade same as an untagged way.
+    structure: "atGrade",
     vehicleType: "commuter",
     gtfsRouteId: "2026",
     osm: { relationId: 13058384, match: /dark red|red line.*rangsit/i },
@@ -167,7 +175,10 @@ export const LINES = [
     nameTh: "สายสีแดงอ่อน",
     // Feed route_color (fd5353) differs from the conventional #EF5350 swatch.
     color: "#FD5353",
-    structure: "elevated",
+    // Same reasoning as red-dark above: 10 of 19 ways carry an explicit
+    // bridge/positive-layer tag, the other 9 (7 bare, 2 embankment=yes) fall
+    // through to this atGrade default.
+    structure: "atGrade",
     vehicleType: "commuter",
     gtfsRouteId: "2027",
     osm: { relationId: 13178788, match: /light red|red line.*taling chan/i },
