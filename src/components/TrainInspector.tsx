@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
-import type { RunDetail } from "../sim/protocol";
+import { useEffect, useMemo, useState } from "react";
+import type { RunDetail, StationInfo } from "../sim/protocol";
 import { activeSimClient } from "../sim/SimClient";
 import { formatCountdown, formatServiceSec } from "../sim/time";
 import { useAppStore } from "../stores/useAppStore";
+
+/** `${route_idx}:${station_idx}` — the natural key for cross-route station lookup. */
+function stationKey(routeIdx: number, stationIdx: number): string {
+  return `${routeIdx}:${stationIdx}`;
+}
 
 /**
  * Train inspector card (F4.2) — route, headsign, origin/destination, next-stop
@@ -25,6 +30,14 @@ export function TrainInspector() {
   const stations = useAppStore((s) => s.stations);
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [ended, setEnded] = useState(false);
+
+  // The schedule list is up to ~47 stops for a full-line run; a plain
+  // stations.find() per stop was an O(stops * stations) scan every render.
+  const stationByKey = useMemo(() => {
+    const map = new Map<string, StationInfo>();
+    for (const s of stations) map.set(stationKey(s.route_idx, s.station_idx), s);
+    return map;
+  }, [stations]);
 
   useEffect(() => {
     if (selectedRunIdx === null) {
@@ -145,9 +158,7 @@ export function TrainInspector() {
                 const passed =
                   !isCurrent &&
                   (detail.next_stop_ordinal === null || i < detail.next_stop_ordinal);
-                const stationInfo = stations.find(
-                  (s) => s.route_idx === detail.route_idx && s.station_idx === stop.station_idx,
-                );
+                const stationInfo = stationByKey.get(stationKey(detail.route_idx, stop.station_idx));
                 return (
                   <li
                     key={`${stop.station_idx}-${i}`}

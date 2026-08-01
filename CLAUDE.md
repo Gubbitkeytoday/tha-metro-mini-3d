@@ -16,7 +16,7 @@ Node.js is required but **not on the system PATH** on this machine — a portabl
 
 - `npm run dev` — Vite dev server (<http://localhost:5173>)
 - `npm run build` — `tsc -b` type-check + production build (keep gzip total ≤ 5 MB, SRS NF2)
-- `npm test` — Vitest unit tests for pure helpers (`src/**/*.test.ts`); browser-level checks live in `tools/verify-*.mjs`
+- `npm test` — Vitest unit tests for pure helpers (`src/**/*.test.ts`, `tools/*.test.mjs`); browser-level checks live in `tools/verify-*.mjs`
 - **`src/sim/pkg.d.ts` is the ambient fallback** that keeps `tsc` green when `src/sim/pkg/` hasn't been generated. Add every new `Engine` method to it in the same change, or the no-Rust-toolchain path breaks while local builds stay green.
 - `npm run preview` — serve the production build
 - `npm run data:fetch` — regenerate `src/data/network.json` (every registered line's track geometry + stations) from OSM Overpass, driven by the registry in `tools/lines.config.mjs` (mirror fallback + User-Agent handled inside `tools/fetch-network.mjs`); pass one or more line keys as args to fetch a subset
@@ -114,7 +114,7 @@ The project is scoped as **vertical MVP slices**, not horizontal layers (data �
 2. **MVP 2 — Green Line data pipeline.** Rust CLI GTFS→binary cache (Green Line only), client-side load/validation, stop-snapping, calendar resolution. Still no motion.
 3. **MVP 3 — Green Line trains moving.** Wasm interpolation engine, Web Worker + transferable-buffer transport, `InstancedMesh` trains, basic time-warp (1×/5×/10×/60×).
 4. **MVP 4 — Interaction & UI.** Follow-camera, station/vehicle inspector, time scrubber, live timetable drawer. Still Green Line only.
-5. **MVP 5 — Multi-line breadth.** ✅ **Done.** Generalized to line-agnostic code; added Purple, ARL, Pink, Yellow, Gold, SRT Dark/Light Red (9 lines total, 155 stations, 4,481 runs). Line selector UI, cross-route interchange metadata, monorail/APM/commuter vehicle models. Performance validated with real numbers, not just "toward" a target — see "MVP 5's one disclosed gap" above: 3 of 4 NF1 sub-checks pass; peak concurrency (171–172 vehicles) is real GTFS density for these 9 lines, not yet the 300-vehicle target.
+5. **MVP 5 — Multi-line breadth.** ✅ **Done.** Generalized to line-agnostic code; added Purple, ARL, Pink, Yellow, Gold, SRT Dark/Light Red (9 lines total, 155 stations, 4,481 runs). Line selector UI, cross-route interchange metadata, monorail/APM/commuter vehicle models. Performance validated with real numbers, not just "toward" a target — see "MVP 5's one disclosed gap" above: 4/5 NF1 sub-checks pass; peak concurrency (171–172 vehicles) is real GTFS density for these 9 lines, not yet the 300-vehicle target.
 6. **MVP 6 — Underground + polish.** MRT Blue (underground), MRT Orange as **track geometry only** (pre-revenue — no trains/timetable until it enters service), underground transparency mode, day/night lighting, final bundle/perf hardening.
 
 ## Transit coverage & operator status

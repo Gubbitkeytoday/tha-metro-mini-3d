@@ -70,7 +70,8 @@ function tick(): void {
   const t0 = performance.now();
   const count = engine.evaluate(dateYyyymmdd, secOfDay, new Float32Array(buffer));
   const evalMs = performance.now() - t0;
-  post({ kind: "frame", simEpochMs, count, evalMs, buffer }, [buffer]);
+  const truncated = engine.last_truncated();
+  post({ kind: "frame", simEpochMs, count, evalMs, truncated, buffer }, [buffer]);
 }
 
 /** UI-rate schedule lookups (contract §7) — never called on the frame path. */

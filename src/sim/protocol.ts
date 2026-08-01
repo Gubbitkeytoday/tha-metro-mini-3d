@@ -147,6 +147,13 @@ export type MainToWorker =
 export type WorkerToMain =
   | { kind: "ready"; validation: ValidationSummary }
   | { kind: "error"; message: string }
-  | { kind: "frame"; simEpochMs: number; count: number; evalMs: number; buffer: ArrayBuffer } // transferred
+  | {
+      kind: "frame";
+      simEpochMs: number;
+      count: number;
+      evalMs: number;
+      truncated: boolean;
+      buffer: ArrayBuffer;
+    } // transferred
   | { kind: "queryResult"; id: number; result: SimQueryResult }
   | { kind: "queryError"; id: number; message: string };

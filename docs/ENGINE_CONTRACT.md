@@ -379,6 +379,10 @@ impl Engine {
     /// Evaluates into the internal buffer and copies into `out`
     /// (a JS-owned Float32Array view). Returns vehicle count.
     pub fn evaluate(&mut self, date_yyyymmdd: u32, sec_of_day: f64, out: &mut [f32]) -> usize;
+    /// True if the most recent `evaluate()` hit MAX_VEHICLES and dropped
+    /// vehicles (MVP 5 review fix) — mirrors `SimWorld::last_truncated`; call
+    /// right after `evaluate()`, before any other call re-evaluates the world.
+    pub fn last_truncated(&self) -> bool;
 }
 ```
 
@@ -405,18 +409,24 @@ Worker → main:
 ```ts
 { kind: "ready", validation: ValidationSummary }
 { kind: "error", message: string }
-{ kind: "frame", simEpochMs: number, count: number, evalMs: number, buffer: ArrayBuffer } // transferred
+{ kind: "frame", simEpochMs: number, count: number, evalMs: number, truncated: boolean, buffer: ArrayBuffer } // transferred
 ```
 
 - Worker loop: `setInterval` at **10 Hz real time**. Each tick computes
   `simEpochMs = clockEpochMs + (performance.now() - clockSetAt) * warp`,
   converts to Bangkok local date + sec-of-day (fixed UTC+7, no DST:
   `local = simEpochMs + 7*3600_000`), calls `engine.evaluate` timed with
-  `performance.now()` (`evalMs`, NF1 harness — `tools/verify-perf.mjs`), posts
-  a frame. `SimClient` keeps a 600-sample rolling window of `evalMs`/`count`
-  (`getEvalStats(): { samples, meanMs, p95Ms, maxCount }`) for that harness;
-  it is not on the render path (§3A.2) — one extra number on an existing
-  message, no new boundary crossing.
+  `performance.now()` (`evalMs`, NF1 harness — `tools/verify-perf.mjs`), reads
+  `engine.last_truncated()` (`truncated`), posts a frame. `SimClient` keeps a
+  600-sample rolling window of `evalMs`/`count`/`truncated`
+  (`getEvalStats(): { samples, meanMs, p95Ms, maxCount, truncated, maxVehicles }`,
+  `resetEvalStats()` clears the window before a fresh measurement) for that
+  harness; it is not on the render path (§3A.2) — two extra fields on an
+  existing message, no new boundary crossing. `getEvalStats().truncated` is
+  true if *any* frame in the window was truncated, not just the latest — MVP 5
+  review fix: previously nothing surfaced `last_truncated()` past sim-core, so
+  `verify-perf.mjs` proxied it with `maxCount < MAX_VEHICLES`, which silently
+  rots if the two constants ever drift apart.
 - Warp changes rebase the clock so sim time is continuous.
 - If the buffer pool is empty (main thread hasn't returned buffers), skip the
   tick — never allocate unboundedly, never block.

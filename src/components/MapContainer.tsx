@@ -55,6 +55,12 @@ export function MapContainer() {
     let sim: SimClient | null = null;
     let unsubscribeVisibility: (() => void) | null = null;
     let rafId = 0;
+    // style.load fires asynchronously; if effect cleanup runs first (a React
+    // StrictMode double-invoke, or a fast unmount before tiles finish
+    // loading), sim/unsubscribeVisibility/rafId below are created after
+    // cleanup already ran with them still null, so nothing would ever tear
+    // them down. Guarded at the end of the style.load handler.
+    let disposed = false;
     const follow = new FollowCamera();
     // Latest interpolated poses, kept for click hit-testing. Owned by the
     // render path — never copied into React state (§3A.7).
@@ -78,9 +84,9 @@ export function MapContainer() {
       // React StrictMode double-invoke in dev) would render every line
       // visible until the next toggle.
       {
-        const initialHidden = useAppStore.getState().hiddenRoutes;
+        const initial = useAppStore.getState();
         for (let i = 0; i < net.lines.length; i++) {
-          const visible = !initialHidden.includes(i);
+          const visible = initial.isRouteVisible(i);
           layer.setLineVisible(i, visible);
           vehicleManager.setRouteVisible(i, visible);
         }
@@ -90,7 +96,7 @@ export function MapContainer() {
       unsubscribeVisibility = useAppStore.subscribe((state, prev) => {
         if (state.hiddenRoutes === prev.hiddenRoutes) return;
         for (let i = 0; i < net.lines.length; i++) {
-          const visible = !state.hiddenRoutes.includes(i);
+          const visible = state.isRouteVisible(i);
           layer.setLineVisible(i, visible);
           vehicleManager.setRouteVisible(i, visible);
         }
@@ -150,6 +156,15 @@ export function MapContainer() {
         rafId = requestAnimationFrame(loop);
       };
       rafId = requestAnimationFrame(loop);
+
+      if (disposed) {
+        // Cleanup already ran before this fired — tear down what it missed
+        // instead of leaking a running rAF loop, worker and subscription.
+        cancelAnimationFrame(rafId);
+        unsubscribeVisibility?.();
+        sim?.dispose();
+        if (activeSimClient.current === sim) activeSimClient.current = null;
+      }
     });
 
     // Click to select a train or station. Uses the most recent interpolated
@@ -224,6 +239,7 @@ export function MapContainer() {
       dev.__localToLngLat = localToLngLat;
     }
     return () => {
+      disposed = true;
       cancelAnimationFrame(rafId);
       removeCameraControls();
       unsubscribeFollow();

@@ -97,8 +97,11 @@ struct NetworkStation {
 
 /// `#RRGGBB` from the registry -> the u32 the cache and UI use.
 fn parse_hex_color(s: &str) -> Result<u32, String> {
-    u32::from_str_radix(s.trim_start_matches('#'), 16)
-        .map_err(|_| format!("bad colour '{s}' (want #RRGGBB)"))
+    let digits = s.trim_start_matches('#');
+    if digits.len() != 6 {
+        return Err(format!("bad colour '{s}' (want #RRGGBB, 6 hex digits)"));
+    }
+    u32::from_str_radix(digits, 16).map_err(|_| format!("bad colour '{s}' (want #RRGGBB)"))
 }
 
 struct Args {
@@ -450,7 +453,7 @@ fn run() -> Result<(), String> {
         .iter()
         .map(|[a, b]| (a.clone(), b.clone()))
         .collect();
-    link_interchanges(&mut routes, INTERCHANGE_RADIUS_M, &interchange_overrides);
+    link_interchanges(&mut routes, INTERCHANGE_RADIUS_M, &interchange_overrides)?;
 
     // ---- Services ----------------------------------------------------------
     let mut service_id_list: Vec<String> = service_ids.iter().cloned().collect();
@@ -476,12 +479,17 @@ fn run() -> Result<(), String> {
     }
 
     // ---- Patterns ----------------------------------------------------------
-    let route_idx_by_gtfs_id: HashMap<&str, usize> = track_file
-        .lines
-        .iter()
-        .enumerate()
-        .filter_map(|(i, l)| l.gtfs_route_id.as_deref().map(|id| (id, i)))
-        .collect();
+    let mut route_idx_by_gtfs_id: HashMap<&str, usize> = HashMap::new();
+    for (i, l) in track_file.lines.iter().enumerate() {
+        if let Some(id) = l.gtfs_route_id.as_deref() {
+            if let Some(prev) = route_idx_by_gtfs_id.insert(id, i) {
+                return Err(format!(
+                    "duplicate gtfsRouteId '{id}' on lines[{prev}] and lines[{i}] \
+                     — every trip for this route would silently resolve to lines[{i}]"
+                ));
+            }
+        }
+    }
     let mut patterns = Vec::new();
     let mut pattern_idx_by_trip: HashMap<String, u16> = HashMap::new();
     for trip in &trips {
@@ -691,7 +699,11 @@ fn run() -> Result<(), String> {
 /// GTFS `parent_station` cannot do this job: interchanges here span operators
 /// (BTS/BEM/SRT) that publish independent feeds and never share a parent.
 /// Distance-clustering with a manual escape hatch is the pragmatic substitute.
-fn link_interchanges(routes: &mut [RouteDoc], radius_m: f64, overrides: &[(String, String)]) {
+fn link_interchanges(
+    routes: &mut [RouteDoc],
+    radius_m: f64,
+    overrides: &[(String, String)],
+) -> Result<(), String> {
     // (route_idx, station_idx, x, y, stop_id)
     let mut pts: Vec<(usize, usize, f32, f32, String)> = Vec::new();
     for (ri, route) in routes.iter().enumerate() {
@@ -701,25 +713,59 @@ fn link_interchanges(routes: &mut [RouteDoc], radius_m: f64, overrides: &[(Strin
         }
     }
 
-    let r2 = (radius_m * radius_m) as f32;
     let mut links: Vec<(usize, usize, usize, usize)> = Vec::new();
+    let mut forced_pairs: HashSet<(usize, usize, usize, usize)> = HashSet::new();
+
+    // Overrides key on a bare GTFS stop_id, unqualified by line, so an
+    // override is only safe if that id (or id pair) resolves to *exactly*
+    // two stations network-wide — otherwise a future stop-id reused by a
+    // third route would silently widen the override into extra links
+    // instead of the one specific walkway/platform quirk it was written for.
+    for (a, b) in overrides {
+        let matches: Vec<&(usize, usize, f32, f32, String)> =
+            pts.iter().filter(|(_, _, _, _, id)| id == a || id == b).collect();
+        if matches.len() != 2 {
+            return Err(format!(
+                "interchange override ({a}, {b}) resolves to {} station(s) network-wide, \
+                 expected exactly 2 — a stop id collision would silently change what this \
+                 override links",
+                matches.len()
+            ));
+        }
+        let (ri, si) = (matches[0].0, matches[0].1);
+        let (rj, sj) = (matches[1].0, matches[1].1);
+        if ri == rj {
+            return Err(format!(
+                "interchange override ({a}, {b}) resolves to two stations on the same route \
+                 (lines[{ri}]) — not a cross-route interchange"
+            ));
+        }
+        links.push((ri, si, rj, sj));
+        forced_pairs.insert((ri, si, rj, sj));
+    }
+
+    let r2 = (radius_m * radius_m) as f32;
     for i in 0..pts.len() {
         for j in (i + 1)..pts.len() {
-            let (ri, si, xi, yi, idi) = (&pts[i].0, &pts[i].1, pts[i].2, pts[i].3, &pts[i].4);
-            let (rj, sj, xj, yj, idj) = (&pts[j].0, &pts[j].1, pts[j].2, pts[j].3, &pts[j].4);
+            let (ri, si, xi, yi) = (pts[i].0, pts[i].1, pts[i].2, pts[i].3);
+            let (rj, sj, xj, yj) = (pts[j].0, pts[j].1, pts[j].2, pts[j].3);
             if ri == rj {
                 continue; // same line: adjacent stations are not an interchange
             }
+            if forced_pairs.contains(&(ri, si, rj, sj)) {
+                continue; // already linked via an explicit override, above
+            }
             let near = (xi - xj).powi(2) + (yi - yj).powi(2) <= r2;
-            let forced = overrides
-                .iter()
-                .any(|(a, b)| (a == idi && b == idj) || (a == idj && b == idi));
-            if near || forced {
-                links.push((*ri, *si, *rj, *sj));
+            if near {
+                links.push((ri, si, rj, sj));
             }
         }
     }
 
+    debug_assert!(
+        routes.len() <= u8::MAX as usize,
+        "route_idx is stored as u8; the registry has grown past 255 lines"
+    );
     for (ri, si, rj, sj) in links {
         routes[ri].stations[si]
             .interchanges
@@ -728,6 +774,7 @@ fn link_interchanges(routes: &mut [RouteDoc], radius_m: f64, overrides: &[(Strin
             .interchanges
             .push(InterchangeRef { route_idx: ri as u8, station_idx: si as u16 });
     }
+    Ok(())
 }
 
 const INTERCHANGE_RADIUS_M: f64 = 300.0;
@@ -794,6 +841,15 @@ mod tests {
              "vehicleType":"commuter","gtfsRouteId":"9","track":[[100.6,13.8,0.5],[100.61,13.8,0.5]],
              "stations":[{"id":"s2","name":"S2","nameTh":"ส2","code":"B1","position":[100.6,13.8,0.5]}]}
         ]}"##
+    }
+
+    #[test]
+    fn parse_hex_color_accepts_six_digits_and_rejects_short_forms() {
+        assert_eq!(parse_hex_color("#00FF80").unwrap(), 0x00FF80);
+        assert_eq!(parse_hex_color("112233").unwrap(), 0x112233);
+        assert!(parse_hex_color("#FFF").is_err(), "3-digit shorthand must not silently parse");
+        assert!(parse_hex_color("#GGGGGG").is_err());
+        assert!(parse_hex_color("#1234567").is_err(), "7 digits must not silently truncate");
     }
 
     #[test]
@@ -879,7 +935,7 @@ mod tests {
             route_with_stations("a", &[("a1", 0.0), ("a2", 1000.0)]),
             route_with_stations("b", &[("b1", 1050.0)]),
         ];
-        link_interchanges(&mut routes, 300.0, &[]);
+        link_interchanges(&mut routes, 300.0, &[]).unwrap();
         assert_eq!(routes[0].stations[1].interchanges.len(), 1, "a2 <-> b1 is 50 m");
         assert_eq!(routes[0].stations[1].interchanges[0].route_idx, 1);
         assert!(routes[1].stations[0].interchanges.iter().any(|i| i.route_idx == 0),
@@ -892,7 +948,7 @@ mod tests {
         // Sukhumvit and Silom cross at Siam with stations metres apart; a
         // self-link would make the inspector advertise a transfer to itself.
         let mut routes = vec![route_with_stations("a", &[("a1", 0.0), ("a2", 20.0)])];
-        link_interchanges(&mut routes, 300.0, &[]);
+        link_interchanges(&mut routes, 300.0, &[]).unwrap();
         assert!(routes[0].stations.iter().all(|s| s.interchanges.is_empty()));
     }
 
@@ -903,8 +959,32 @@ mod tests {
             route_with_stations("a", &[("a1", 0.0)]),
             route_with_stations("b", &[("b1", 2000.0)]),
         ];
-        link_interchanges(&mut routes, 100.0, &[("a1".into(), "b1".into())]);
+        link_interchanges(&mut routes, 100.0, &[("a1".into(), "b1".into())]).unwrap();
         assert_eq!(routes[0].stations[0].interchanges.len(), 1);
         assert_eq!(routes[1].stations[0].interchanges.len(), 1);
+    }
+
+    #[test]
+    fn rejects_an_override_whose_stop_id_collides_with_a_third_route() {
+        // A same-id override like Pink/Purple's ["359","359"] is only safe
+        // while exactly two stations network-wide carry that id; a third
+        // route reusing it must fail loudly instead of silently forming an
+        // extra link.
+        let mut routes = vec![
+            route_with_stations("a", &[("shared", 0.0)]),
+            route_with_stations("b", &[("shared", 2000.0)]),
+            route_with_stations("c", &[("shared", 4000.0)]),
+        ];
+        let err = link_interchanges(&mut routes, 100.0, &[("shared".into(), "shared".into())])
+            .unwrap_err();
+        assert!(err.contains("shared"));
+    }
+
+    #[test]
+    fn rejects_an_override_resolving_to_the_same_route_twice() {
+        let mut routes = vec![route_with_stations("a", &[("a1", 0.0), ("a2", 2000.0)])];
+        let err = link_interchanges(&mut routes, 100.0, &[("a1".into(), "a2".into())])
+            .unwrap_err();
+        assert!(err.contains("same route"));
     }
 }

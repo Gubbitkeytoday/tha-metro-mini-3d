@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { assertRegistryValid, LINES, STRUCTURE_ALTITUDE_M } from "./lines.config.mjs";
 
@@ -20,6 +21,16 @@ describe("line registry", () => {
   it("rejects an unknown structure", () => {
     const bad = [{ ...LINES[0], structure: "floating" }];
     expect(() => assertRegistryValid(bad)).toThrow(/unknown structure/);
+  });
+
+  it("matches the committed src/data/network.json line order", () => {
+    // This is the invariant the whole registry-driven pipeline rests on
+    // (route_idx == network.json lines[i] == LINES[i]) — a preprocessor rebuild
+    // is the only thing that otherwise catches a stale committed data file,
+    // and it isn't run in CI. A duplicate-gtfsRouteId regression like the one
+    // this PR review caught would silently desync the two without this check.
+    const doc = JSON.parse(readFileSync(new URL("../src/data/network.json", import.meta.url)));
+    expect(doc.lines.map((l) => l.key)).toEqual(LINES.map((l) => l.key));
   });
 
   it("prices every structure the SRS defines", () => {
