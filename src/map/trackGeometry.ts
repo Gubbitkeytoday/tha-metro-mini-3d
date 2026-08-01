@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry as ThreeLineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
-import type { LineGeometry, Structure } from "../types";
+import type { LineGeometry, Structure, TrackPoint } from "../types";
 import { lngLatAltToLocal } from "./coordinates";
 
 /**
@@ -27,9 +27,9 @@ export const DECK_PROFILE: Record<Structure | "monorail", { widthM: number; dept
 };
 
 /** Monorail/APM guideways are beams, not viaducts, whatever their altitude. */
-function profileFor(line: LineGeometry) {
+function profileFor(line: LineGeometry, structure: Structure) {
   const beam = line.vehicleType === "monorail" || line.vehicleType === "apm";
-  return beam ? DECK_PROFILE.monorail : DECK_PROFILE[line.structure];
+  return beam ? DECK_PROFILE.monorail : DECK_PROFILE[structure];
 }
 
 /** Resample interval along the smoothed curve. */
@@ -37,22 +37,63 @@ const SAMPLE_SPACING_M = 12;
 
 const UP = new THREE.Vector3(0, 0, 1);
 
-function toLocalVec3(points: LineGeometry["track"]): THREE.Vector3[] {
-  return points.map((p) => new THREE.Vector3(...lngLatAltToLocal(p)));
+// TrackPoint carries [lng, lat, alt, structure]; only the first three fields
+// are geographic — slice them off before handing a point to the LngLatAlt API.
+function toLocalVec3(points: TrackPoint[]): THREE.Vector3[] {
+  return points.map((p) => new THREE.Vector3(...lngLatAltToLocal([p[0], p[1], p[2]])));
 }
 
 /**
- * Sweep a rectangular viaduct-deck profile along the smoothed track curve.
+ * Cut a track polyline into maximal same-structure runs.
+ *
+ * A run of 2+ points needs no help: sweepDeck curves through it on its own,
+ * and the next run picks up cleanly at the very next original point, so
+ * there's no gap to begin with. A run that collapses to a single point (its
+ * structure holds for only one sample) borrows one point from the
+ * neighbouring run — CatmullRomCurve3 throws below 2 points, and this also
+ * gives that portal a shared vertex instead of a hole between the last
+ * sample of one structure and the first of the next. A lone run can only be
+ * too short when it has a neighbour to borrow from: a track under 2 points
+ * returns early above, so a single-segment (uniform-structure) track is
+ * always already long enough.
+ */
+export function splitByStructure(track: TrackPoint[]): TrackPoint[][] {
+  if (track.length < 2) return [];
+
+  const runs: TrackPoint[][] = [];
+  let start = 0;
+  for (let i = 1; i <= track.length; i++) {
+    if (i === track.length || track[i][3] !== track[i - 1][3]) {
+      runs.push(track.slice(start, i));
+      start = i;
+    }
+  }
+
+  for (let i = 0; i < runs.length; i++) {
+    if (runs[i].length >= 2) continue;
+    if (i + 1 < runs.length) runs[i] = [...runs[i], runs[i + 1][0]];
+    else runs[i] = [runs[i - 1][runs[i - 1].length - 1], ...runs[i]];
+  }
+
+  return runs;
+}
+
+/**
+ * Sweep the deck profile along one same-structure run of track points.
  * Produces one indexed BufferGeometry (top, bottom and both side faces).
  */
-export function buildTrackDeck(line: LineGeometry): THREE.Mesh {
-  const controlPoints = toLocalVec3(line.track);
+function sweepDeck(
+  points: TrackPoint[],
+  profile: { widthM: number; depthM: number },
+  color: THREE.Color,
+): THREE.Mesh {
+  const controlPoints = toLocalVec3(points);
   const curve = new THREE.CatmullRomCurve3(controlPoints, false, "centripetal");
   const length = curve.getLength();
   const samples = Math.max(controlPoints.length, Math.round(length / SAMPLE_SPACING_M));
 
   const centers = curve.getSpacedPoints(samples);
-  const { widthM, depthM } = profileFor(line);
+  const { widthM, depthM } = profile;
   const halfW = widthM / 2;
 
   // 4 profile corners per sample: topLeft, topRight, bottomRight, bottomLeft
@@ -95,12 +136,32 @@ export function buildTrackDeck(line: LineGeometry): THREE.Mesh {
   geometry.computeVertexNormals();
 
   const material = new THREE.MeshLambertMaterial({
-    color: new THREE.Color(line.color),
+    color,
     side: THREE.DoubleSide,
   });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.name = `track-${line.key}`;
-  return mesh;
+  return new THREE.Mesh(geometry, material);
+}
+
+/**
+ * Sweep the deck profile along each same-structure run of the track.
+ *
+ * Returns a Group (was a single Mesh through MVP 5): a line may now change
+ * structure mid-route, and each band needs its own cross-section AND its own
+ * material, so the underground-transparency mode can address them separately.
+ * Each child mesh's `userData.structure` is what ThreeLayer sorts on.
+ */
+export function buildTrackDeck(line: LineGeometry): THREE.Group {
+  const group = new THREE.Group();
+  group.name = `track-${line.key}`;
+  const color = new THREE.Color(line.color);
+  for (const [i, run] of splitByStructure(line.track).entries()) {
+    const structure = run[0][3];
+    const mesh = sweepDeck(run, profileFor(line, structure), color);
+    mesh.name = `track-${line.key}-${structure}-${i}`;
+    mesh.userData.structure = structure;
+    group.add(mesh);
+  }
+  return group;
 }
 
 /**
@@ -128,6 +189,18 @@ export function buildTrackLine(line: LineGeometry): { line: Line2; material: Lin
   line2.computeLineDistances();
   line2.name = `trackline-${line.key}`;
   return { line: line2, material };
+}
+
+/**
+ * Vertical scale + center for a station's support pole, given the platform
+ * altitude. Handles both signs: an underground platform's "pole" is a shaft
+ * from ground level DOWN to the platform, which needs a positive scale and a
+ * negative center — not the negative scale a naive makeScale(1,1,z) produces
+ * (negative scale inverts face winding and the pole lights black).
+ */
+export function poleTransform(altitudeM: number): { scaleZ: number; centerZ: number } {
+  const scaleZ = Math.max(Math.abs(altitudeM), 0.5);
+  return { scaleZ, centerZ: altitudeM / 2 };
 }
 
 /**
@@ -162,13 +235,20 @@ export function buildStationMarkers(lines: LineGeometry[]): THREE.Object3D {
     m.makeTranslation(x, y, z + 1.5);
     discs.setMatrixAt(i, m);
     discs.setColorAt(i, stations[i].color);
-    // unit-height pole scaled to reach from ground to deck
-    m.makeScale(1, 1, z).setPosition(x, y, z / 2);
+    // unit-height pole scaled to reach from ground to the platform, whichever
+    // side of ground level that is (see poleTransform for the underground case)
+    const { scaleZ, centerZ } = poleTransform(z);
+    m.makeScale(1, 1, scaleZ).setPosition(x, y, centerZ);
     poles.setMatrixAt(i, m);
   }
   discs.instanceMatrix.needsUpdate = true;
   if (discs.instanceColor) discs.instanceColor.needsUpdate = true;
   poles.instanceMatrix.needsUpdate = true;
+
+  // Tagged so Task 6's underground-transparency mode knows which station
+  // groups contain a sub-surface platform (dim/hide) vs. which line owns them.
+  discs.userData.hasSubsurface = stations.some((s) => s.position[2] < 0);
+  group.userData.lineKey = lines[0]?.key ?? "";
 
   group.add(discs, poles);
   return group;
