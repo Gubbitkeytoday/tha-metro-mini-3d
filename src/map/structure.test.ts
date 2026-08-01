@@ -4,7 +4,20 @@ import { STRUCTURE_ALTITUDE_M, structureOfWay } from "./structure";
 describe("structureOfWay", () => {
   it("reads a tunnel as underground", () => {
     expect(structureOfWay({ tunnel: "yes" })).toBe("underground");
-    expect(structureOfWay({ tunnel: "building_passage" })).toBe("underground");
+  });
+
+  it("treats tunnel=building_passage as covered, not underground", () => {
+    // OSM uses building_passage for track running through/under a building
+    // (e.g. a station box), not for a physically bored tunnel. Real Bangkok
+    // data proves this out: both SRT Dark Red and Light Red are tagged
+    // tunnel=building_passage + layer=1 (positive) + covered=yes where they
+    // pass through Bang Sue Grand Station, and the SRT Red lines have no
+    // underground track anywhere — they stay on their elevated viaduct
+    // there. So building_passage must fall through to the bridge/layer/
+    // fallback checks instead of forcing underground.
+    expect(structureOfWay({ tunnel: "building_passage", layer: "1" })).toBe("elevated");
+    expect(structureOfWay({ tunnel: "building_passage" })).toBe("elevated");
+    expect(structureOfWay({ tunnel: "building_passage" }, "atGrade")).toBe("atGrade");
   });
 
   it("reads a bridge or a positive layer as elevated", () => {

@@ -27,10 +27,17 @@ export const VEHICLE_TYPES = ["heavy", "monorail", "apm", "commuter"];
  * (the fetcher imports it directly) and cannot import a .ts module. Keep the
  * two copies in sync — lines.config.test.mjs asserts they agree on the same
  * cases structure.test.ts checks for the TS copy.
+ *
+ * `tunnel=building_passage` is a deliberate exception: OSM uses it for track
+ * running through/under a building, not a physically bored tunnel. Verified
+ * against real Bangkok data — both SRT Dark Red and Light Red are tagged
+ * tunnel=building_passage + layer=1 (positive) + covered=yes at Bang Sue
+ * Grand Station, and the SRT Red lines have no underground track anywhere.
+ * Falls through to bridge/layer/fallback, same as tunnel=no.
  */
 export function structureOfWay(tags, fallback = "elevated") {
   const tunnel = tags.tunnel;
-  if (tunnel && tunnel !== "no") return "underground";
+  if (tunnel && tunnel !== "no" && tunnel !== "building_passage") return "underground";
   const bridge = tags.bridge;
   if (bridge && bridge !== "no") return "elevated";
   if (tunnel === "no" || bridge === "no") return "elevated";

@@ -49,4 +49,13 @@ describe("line registry", () => {
     expect(structureOfWay({ layer: "-2" })).toBe("underground");
     expect(structureOfWay({}, "atGrade")).toBe("atGrade");
   });
+
+  it("treats tunnel=building_passage as covered, not underground", () => {
+    // Real Bangkok data: SRT Dark/Light Red are tagged tunnel=building_passage
+    // + layer=1 (positive) where they pass through Bang Sue Grand Station —
+    // an elevated line passing through a station building, not a bored
+    // tunnel. See the matching comment on the TS copy in src/map/structure.ts.
+    expect(structureOfWay({ tunnel: "building_passage", layer: "1" })).toBe("elevated");
+    expect(structureOfWay({ tunnel: "building_passage" })).toBe("elevated");
+  });
 });
