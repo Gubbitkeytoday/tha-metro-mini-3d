@@ -148,19 +148,15 @@ export const LINES = [
 
 /**
  * Interchanges the 300 m radius cannot see — long paid/unpaid walkways.
- * Entries are GTFS stop_id pairs; fill these in against real data once the
- * full network is in the cache (Task 11), not from memory.
+ * Entries are line-qualified: a bare stop-id pair would link every route
+ * that happens to reuse that id (Namtang reuses ids across operators).
  */
 export const INTERCHANGE_OVERRIDES = [
-  // MRT Purple <-> MRT Pink, Nonthaburi Civic Center: the Namtang feed uses
-  // the SAME gtfs_stop_id (359) for both lines' schedules, but the two
-  // platforms are physically ~555 m apart (Purple's PP11 vs Pink's PK01,
-  // confirmed against OSM node tags — see the allowLargeSnapStopIds note on
-  // the `pink` line entry above) — well outside the 300 m auto-link radius,
-  // so it needs a manual pair. Both sides use the same stop_id on purpose;
-  // link_interchanges() only ever finds Purple's copy and Pink's copy of it
-  // (no other route uses "359"), so this can't create a spurious link.
-  ["359", "359"],
+  // MRT Purple <-> MRT Pink, Nonthaburi Civic Center. The Namtang feed uses
+  // the SAME gtfs_stop_id (359) on both lines' schedules, but the platforms
+  // are ~555 m apart (Purple's PP11 vs Pink's PK01, confirmed against OSM
+  // node tags — see the allowLargeSnapStopIds note on the `pink` entry).
+  { aLine: "purple", aStop: "359", bLine: "pink", bStop: "359" },
 ];
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -190,6 +186,14 @@ export function assertRegistryValid(lines = LINES) {
       if (v === undefined) continue;
       if (!Array.isArray(v) || !v.every((id) => typeof id === "string" && id.length > 0)) {
         throw new Error(`${l.key}: ${field} must be an array of non-empty strings`);
+      }
+    }
+  }
+
+  for (const o of INTERCHANGE_OVERRIDES) {
+    for (const side of ["a", "b"]) {
+      if (!keys.has(o[`${side}Line`])) {
+        throw new Error(`interchange override names unknown line '${o[`${side}Line`]}'`);
       }
     }
   }
