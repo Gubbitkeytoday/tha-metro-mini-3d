@@ -26,6 +26,8 @@ export class NetworkLayer implements CustomLayerInterface {
   private camera = new THREE.Camera();
   private scene: THREE.Scene | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
+  private sunLight: THREE.DirectionalLight | null = null;
+  private ambientLight: THREE.AmbientLight | null = null;
   /** local ENU meters -> absolute mercator (float64, applied in JS). */
   private originMatrix = new THREE.Matrix4()
     .makeTranslation(ORIGIN_MERC.x, ORIGIN_MERC.y, 0)
@@ -61,10 +63,13 @@ export class NetworkLayer implements CustomLayerInterface {
     this.renderer.autoClear = false;
 
     const scene = new THREE.Scene();
-    scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+    const ambient = new THREE.AmbientLight(0xffffff, 1.6);
+    scene.add(ambient);
     const sun = new THREE.DirectionalLight(0xffffff, 2.2);
     sun.position.set(-3000, -2000, 8000);
     scene.add(sun);
+    this.ambientLight = ambient;
+    this.sunLight = sun;
 
     for (const line of this.data.lines) {
       const group = new THREE.Group();
@@ -81,6 +86,31 @@ export class NetworkLayer implements CustomLayerInterface {
     this.scene = scene;
     this.indexMaterialsByBand(scene);
     this.applyUndergroundMode();
+  }
+
+  /**
+   * Point the key light at the sun's real position for the simulated time
+   * (SRS §F3.3). Called at UI rate from MapContainer — solar elevation moves
+   * ~0.004°/s at 1× warp, so evaluating this per frame would be pure waste.
+   * The 10 km radius just needs to clear the scene; a directional light's
+   * position only sets its direction.
+   */
+  setSun(
+    dir: { east: number; north: number; up: number },
+    palette: {
+      sun: number;
+      sunIntensity: number;
+      ambient: number;
+      ambientIntensity: number;
+    },
+  ): void {
+    if (!this.sunLight || !this.ambientLight) return;
+    const R = 10_000;
+    this.sunLight.position.set(dir.east * R, dir.north * R, Math.max(dir.up, 0.05) * R);
+    this.sunLight.color.setHex(palette.sun);
+    this.sunLight.intensity = palette.sunIntensity;
+    this.ambientLight.color.setHex(palette.ambient);
+    this.ambientLight.intensity = palette.ambientIntensity;
   }
 
   /**
@@ -174,6 +204,8 @@ export class NetworkLayer implements CustomLayerInterface {
     this.lineGroups = [];
     this.surfaceMaterials = [];
     this.subsurfaceMaterials = [];
+    this.sunLight = null;
+    this.ambientLight = null;
     // The GL context belongs to MapLibre — dispose Three's wrapper only.
     this.renderer?.dispose();
     this.renderer = null;

@@ -12,6 +12,7 @@ import { NetworkLayer } from "../map/ThreeLayer";
 import { installCameraControls } from "../map/cameraControls";
 import { FollowCamera } from "../map/followCamera";
 import { pickAt } from "../map/selection";
+import { skyPalette, sunDirection } from "../map/sun";
 import { VehicleManager } from "../map/VehicleManager";
 import { localToLngLat, ORIGIN_LNG_LAT } from "../map/coordinates";
 import { SimClient, activeSimClient } from "../sim/SimClient";
@@ -169,10 +170,25 @@ export function MapContainer() {
         lastCount = count;
       };
 
+      // Day/night follows the SIM clock, not wall time (F3.3) — scrubbing to
+      // 22:00 must actually look like 22:00. Updated at ~2 Hz: at 60× warp
+      // that is still under 0.25° of solar motion per step, well below what
+      // is visible, and it keeps trigonometry off the frame path.
+      let lastSunUpdate = 0;
+      const updateSun = (now: number) => {
+        if (now - lastSunUpdate < 500) return;
+        lastSunUpdate = now;
+        const client = activeSimClient.current;
+        if (!client) return;
+        const dir = sunDirection(client.getSimNow());
+        layer.setSun(dir, skyPalette(dir.elevationDeg));
+      };
+
       // MapLibre only repaints on demand — keep frames coming while the
       // engine is running.
       const loop = () => {
         if (useAppStore.getState().engineStatus === "ready") {
+          updateSun(performance.now());
           follow.apply(map);
           map.triggerRepaint();
         }
