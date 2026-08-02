@@ -27,7 +27,7 @@ npm run dev        # Vite dev server at http://localhost:5173
 | `npm run dev` | Vite dev server |
 | `npm run build` | `tsc -b` type-check + production build to `dist/` |
 | `npm run typecheck` | Type-check only |
-| `npm test` | Vitest unit tests (`vitest` for watch mode) |
+| `npm test` | Vitest unit tests for pure helpers (`src/**/*.test.ts`, `tools/*.test.mjs`); browser-level checks live in `tools/verify-*.mjs` (`vitest` directly for watch mode) |
 | `npm run preview` | Serve the production build |
 | `npm run data:fetch [lineKey ...]` | Regenerate `src/data/network.json` — every registry line's (`tools/lines.config.mjs`) track geometry + stations from OSM Overpass via `tools/fetch-network.mjs`; pass one or more line keys to fetch a subset |
 | `node tools/inspect-gtfs.mjs <gtfs-dir>` | Read-only: print every route in an extracted GTFS feed — the fastest way to populate a new registry entry |

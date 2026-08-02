@@ -124,7 +124,7 @@ Other scripts:
 |---------|--------------|
 | `npm run build` | Type-check (`tsc -b`) + production build to `dist/` |
 | `npm run typecheck` | Type-check only |
-| `npm test` | Vitest unit tests for the pure helpers (time formatting, bearing math) |
+| `npm test` | Vitest unit tests for pure helpers (`src/**/*.test.ts`, `tools/*.test.mjs`, e.g. time formatting, bearing math, track gradient limiting, day/night lighting); browser-level checks live in `tools/verify-*.mjs` |
 | `npm run preview` | Serve the production build locally |
 | `npm run data:fetch [lineKey ...]` | Regenerate `src/data/network.json` — every registry line's track geometry + stations from OpenStreetMap (Overpass); pass one or more `tools/lines.config.mjs` keys to fetch a subset |
 | `node tools/inspect-gtfs.mjs <gtfs-dir>` | Read-only: print every route in an extracted GTFS feed (id, agency, names, colour, trip count, frequency-based or not) — the fastest way to check a feed before adding a `tools/lines.config.mjs` entry |
