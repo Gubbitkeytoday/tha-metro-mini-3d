@@ -346,7 +346,7 @@ Vehicle record layout (stride 8 × f32) — **identical constants in
 | 2    | `z`       | up meters |
 | 3    | `yaw`     | radians, CCW from +x (east), from track tangent, **direction of travel** |
 | 4    | `state`   | 0 = dwelling at a station, 1 = in transit |
-| 5    | `run_idx` | index into CacheDoc.runs (exact f32 up to 2^24 — fine) |
+| 5    | `run_idx` | vehicle identity: index into `CacheDoc.runs`, **plus `SPILLOVER_RUN_TAG` (1 << 20) for a vehicle from the previous service day's spillover** (exact f32 up to 2^24 — fine). Strip the tag with `vehicle_run_idx()` before using it as a runs index; `run_detail` does this to its own argument, so the UI may pass lane 5 through verbatim. The tag exists because yesterday's copy and today's copy of one run are two different vehicles that can be live simultaneously at opposite ends of the line — matching them as one made a train streak across the city at the rollover. |
 | 6    | `route_idx` | index into `CacheDoc.routes` == `network.json` line order == `tools/lines.config.mjs` `LINES` order (the registry-index invariant, §2.1 — NOT a hardcoded pair; as of MVP 5 there are 9 routes, [0]=Sukhumvit … [8]=SRT Light Red) |
 | 7    | `progress`| 0..1 smoothed progress of current inter-station leg (0 while dwelling) |
 
@@ -356,6 +356,14 @@ Motion math (F2.1/F2.2): for time `t` within a run, find the bracketing
 `arc = arc_A + (arc_B - arc_A)·s`, position/tangent from binary-searching
 `track_arc_m` and lerping the two polyline points. Yaw from the segment
 tangent, flipped to the direction of travel (`arc_B < arc_A` ⇒ +π).
+`arr_B == dep_A` (zero travel time) would divide by zero; the engine guards it
+with `p = 1.0`, and the **preprocessor prevents it from arising** by capping a
+dwell that runs up to the next arrival (`MAX_DWELL_BEFORE_ZERO_LEG_S`) — the
+Namtang feed publishes 145 such stops, all on MRT Blue.
+Each `PatternStop` carries its own `arc_m` rather than reading the station's,
+which is what lets one stop sit at different arc positions on different
+patterns — required wherever a route's polyline passes a platform twice (MRT
+Blue's loop). The preprocessor chooses those positions per trip.
 A run is inactive before its first arrival and after its last arrival — a
 finished run must emit nothing (**no overshoot past termini** — MVP 3 DoD).
 
@@ -433,7 +441,7 @@ Worker → main:
 
 Renderer-side interpolation (§3A.7): keep the two most recent frames; at
 render time `alpha = (renderSimTime - frameA.simEpochMs) / (frameB.simEpochMs
-- frameA.simEpochMs)`; match vehicles across frames by `run_idx` (lane 5);
+- frameA.simEpochMs)`; match vehicles across frames by `run_idx` (lane 5, tag included — that is what makes it a per-vehicle identity);
 lerp x/y/z, slerp-lite yaw (shortest angular distance); a vehicle present in
 only one frame renders at that frame's pose. Render sim clock =
 `clockEpochMs + (now - clockSetAt) * warp` computed main-thread-side from the
