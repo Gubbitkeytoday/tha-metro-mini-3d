@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DECK_PROFILE, buildTrackDeck, poleTransform, splitByStructure } from "./trackGeometry";
+import { DECK_PROFILE, buildTrackDeck, buildTrackLine, poleTransform, splitByStructure } from "./trackGeometry";
 import type { LineGeometry, TrackPoint } from "../types";
 
 describe("deck profile by structure", () => {
@@ -234,6 +234,31 @@ describe("splitByStructure — a long run followed by a chain of singletons (reg
     expect(group.children[0].userData.structure).toBe("elevated");
     expect(group.children[1].userData.structure).toBe("underground");
     expect(group.children[2].userData.structure).toBe("atGrade");
+  });
+});
+
+// Local factory named differently from the file's existing `line` helper
+// above (which takes a bare TrackPoint[] and hardcodes every other
+// LineGeometry field) — this one takes a Partial<LineGeometry> override so
+// `preRevenue` can be flipped per test.
+const preRevenueLine = (over: Partial<LineGeometry> = {}): LineGeometry => ({
+  key: "t", name: "T", nameTh: "T", color: "#888888",
+  structure: "elevated", vehicleType: "heavy", gtfsRouteId: "1",
+  preRevenue: false, relationId: 1, osmName: "T",
+  track: [[100.53, 13.74, 15, "elevated"], [100.54, 13.74, 15, "elevated"]],
+  stations: [],
+  ...over,
+});
+
+describe("pre-revenue treatment", () => {
+  it("dashes the centerline of an unopened line", () => {
+    const { material } = buildTrackLine(preRevenueLine({ preRevenue: true }));
+    expect(material.dashed).toBe(true);
+  });
+
+  it("leaves an operational line's centerline solid", () => {
+    const { material } = buildTrackLine(preRevenueLine());
+    expect(material.dashed).toBe(false);
   });
 });
 

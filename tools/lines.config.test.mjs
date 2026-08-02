@@ -50,6 +50,11 @@ describe("line registry", () => {
     expect(structureOfWay({}, "atGrade")).toBe("atGrade");
   });
 
+  it("refuses to simulate a pre-revenue line", () => {
+    const bad = [{ ...LINES[0], preRevenue: true }];
+    expect(() => assertRegistryValid(bad)).toThrow(/must have gtfsRouteId: null/);
+  });
+
   it("treats tunnel=building_passage as covered, not underground", () => {
     // Real Bangkok data: SRT Dark/Light Red are tagged tunnel=building_passage
     // + layer=1 (positive) where they pass through Bang Sue Grand Station —

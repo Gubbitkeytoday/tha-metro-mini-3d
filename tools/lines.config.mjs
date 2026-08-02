@@ -56,6 +56,7 @@ export const LINES = [
     structure: "elevated",
     vehicleType: "heavy",
     gtfsRouteId: "1",
+    preRevenue: false,
     osm: { relationId: 444651, match: /sukhumvit/i },
   },
   {
@@ -66,6 +67,7 @@ export const LINES = [
     structure: "elevated",
     vehicleType: "heavy",
     gtfsRouteId: "2",
+    preRevenue: false,
     osm: { relationId: 2067854, match: /silom/i },
   },
   {
@@ -78,6 +80,7 @@ export const LINES = [
     structure: "elevated",
     vehicleType: "heavy",
     gtfsRouteId: "4",
+    preRevenue: false,
     osm: { relationId: 6988563, match: /purple/i },
   },
   {
@@ -89,6 +92,7 @@ export const LINES = [
     structure: "elevated",
     vehicleType: "commuter",
     gtfsRouteId: "5",
+    preRevenue: false,
     osm: { relationId: 2148241, match: /airport rail link/i },
   },
   {
@@ -100,6 +104,7 @@ export const LINES = [
     structure: "elevated",
     vehicleType: "monorail",
     gtfsRouteId: "2436",
+    preRevenue: false,
     osm: { relationId: 16740886, match: /pink/i },
     // The Namtang feed bundles the Muang Thong Thani spur's 4 shuttle trip
     // patterns (stop_ids 16936 "Impact Muang Thong Thani" / 16937 "Lake
@@ -137,6 +142,7 @@ export const LINES = [
     structure: "elevated",
     vehicleType: "monorail",
     gtfsRouteId: "2224",
+    preRevenue: false,
     osm: { relationId: 15806897, match: /yellow/i },
   },
   {
@@ -148,6 +154,7 @@ export const LINES = [
     structure: "elevated",
     vehicleType: "apm",
     gtfsRouteId: "2025",
+    preRevenue: false,
     osm: { relationId: 11681439, match: /gold/i },
   },
   {
@@ -167,6 +174,7 @@ export const LINES = [
     structure: "atGrade",
     vehicleType: "commuter",
     gtfsRouteId: "2026",
+    preRevenue: false,
     osm: { relationId: 13058384, match: /dark red|red line.*rangsit/i },
   },
   {
@@ -181,6 +189,7 @@ export const LINES = [
     structure: "atGrade",
     vehicleType: "commuter",
     gtfsRouteId: "2027",
+    preRevenue: false,
     osm: { relationId: 13178788, match: /light red|red line.*taling chan/i },
   },
 ];
@@ -220,6 +229,14 @@ export function assertRegistryValid(lines = LINES) {
       throw new Error(`${l.key}: unknown vehicleType '${l.vehicleType}'`);
     }
     if (!HEX.test(l.color)) throw new Error(`${l.key}: color must be #RRGGBB`);
+    if (typeof l.preRevenue !== "boolean") {
+      throw new Error(`${l.key}: preRevenue must be a boolean`);
+    }
+    if (l.preRevenue && l.gtfsRouteId !== null) {
+      // A line with a live GTFS route id would be simulated — trains running
+      // on track that does not exist yet.
+      throw new Error(`${l.key}: a preRevenue line must have gtfsRouteId: null`);
+    }
     for (const field of ["excludeGtfsStopIds", "allowLargeSnapStopIds"]) {
       const v = l[field];
       if (v === undefined) continue;

@@ -156,6 +156,7 @@ function sweepDeck(
   points: TrackPoint[],
   profile: { widthM: number; depthM: number },
   color: THREE.Color,
+  preRevenue: boolean,
 ): THREE.Mesh {
   const controlPoints = toLocalVec3(points);
   const curve = new THREE.CatmullRomCurve3(controlPoints, false, "centripetal");
@@ -208,6 +209,8 @@ function sweepDeck(
   const material = new THREE.MeshLambertMaterial({
     color,
     side: THREE.DoubleSide,
+    transparent: preRevenue,
+    opacity: preRevenue ? 0.55 : 1,
   });
   return new THREE.Mesh(geometry, material);
 }
@@ -223,7 +226,15 @@ function sweepDeck(
 export function buildTrackDeck(line: LineGeometry): THREE.Group {
   const group = new THREE.Group();
   group.name = `track-${line.key}`;
-  const color = new THREE.Color(line.color);
+  // Unbuilt track reads as a ghost: same hue, much less saturation and a
+  // little transparency, so it is legible as alignment without competing
+  // with lines that actually carry trains.
+  const deckColor = new THREE.Color(line.color);
+  if (line.preRevenue) {
+    const hsl = { h: 0, s: 0, l: 0 };
+    deckColor.getHSL(hsl);
+    deckColor.setHSL(hsl.h, hsl.s * 0.25, Math.min(hsl.l * 1.25 + 0.15, 0.85));
+  }
   const runs = splitByStructure(line.track);
   // A run's own points can include one borrowed from a neighbour (see
   // splitByStructure), so its true structure isn't reliably readable off
@@ -232,7 +243,7 @@ export function buildTrackDeck(line: LineGeometry): THREE.Group {
   const structures = groupByStructure(line.track).map((g) => g[0][3]);
   for (const [i, run] of runs.entries()) {
     const structure = structures[i];
-    const mesh = sweepDeck(run, profileFor(line, structure), color);
+    const mesh = sweepDeck(run, profileFor(line, structure), deckColor, line.preRevenue);
     mesh.name = `track-${line.key}-${structure}-${i}`;
     mesh.userData.structure = structure;
     group.add(mesh);
@@ -260,7 +271,15 @@ export function buildTrackLine(line: LineGeometry): { line: Line2; material: Lin
   const material = new LineMaterial({
     color: new THREE.Color(line.color).getHex(),
     linewidth: 3, // pixels (worldUnits: false is the default)
+    // A pre-revenue alignment must not read as "a train could be here" —
+    // dashes are the standard transit-map convention for under-construction.
+    dashed: line.preRevenue,
+    dashSize: 40,
+    gapSize: 30,
   });
+  // LineMaterial derives its USE_DASH shader define from the `dashed`
+  // constructor option, but force a recompile to be safe regardless.
+  material.needsUpdate = true;
   const line2 = new Line2(geometry, material);
   line2.computeLineDistances();
   line2.name = `trackline-${line.key}`;

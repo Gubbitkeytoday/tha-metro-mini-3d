@@ -24,11 +24,15 @@ function LineRow({ line, routeIdx }: { line: LineGeometry; routeIdx: number }) {
           style={{ background: line.color, opacity: visible ? 1 : 0.3 }}
         />
         <span className="truncate">{line.name}</span>
-        {line.gtfsRouteId === null && (
+        {line.preRevenue ? (
+          <span className="ml-auto shrink-0 rounded bg-amber-100 px-1 text-[9px] uppercase text-amber-700">
+            pre-revenue
+          </span>
+        ) : line.gtfsRouteId === null ? (
           <span className="ml-auto shrink-0 text-[9px] uppercase text-slate-400">
             track only
           </span>
-        )}
+        ) : null}
       </button>
     </li>
   );

@@ -265,6 +265,7 @@ async function main() {
       structure: line.structure,
       vehicleType: line.vehicleType,
       gtfsRouteId: line.gtfsRouteId,
+      preRevenue: line.preRevenue,
       excludeGtfsStopIds: line.excludeGtfsStopIds ?? [],
       allowLargeSnapStopIds: line.allowLargeSnapStopIds ?? [],
       ...geom,
