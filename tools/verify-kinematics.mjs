@@ -16,11 +16,10 @@ import puppeteer from "puppeteer-core";
 // world.rs) reports these runs as continuously "dwelling", jumping instantly
 // from one station's exact position to the next's — a real, disclosed data
 // quality defect in a small subset of Blue's schedule, not a coordinate or
-// engine bug. Bounds below are widened enough to tolerate one full Blue
-// inter-station leg (observed up to ~1875 m across a handful of samples,
-// average spacing ~1235 m) without masking a genuinely wrong-order-of-
-// magnitude bug (e.g. a multi-km coordinate-frame or arc-wraparound error).
-const DISPLACEMENT_HOP_M = 2500;
+// engine bug. These known degenerate runs are excluded from maxD and
+// dwellMovedUnknown so the strict <900 m displacement and 1 m dwell-drift
+// thresholds remain fully binding for all other ~3,239 Blue runs and all nine
+// other lines.
 
 const browser = await puppeteer.launch({
   executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
@@ -62,7 +61,7 @@ let moved = 0, still = 0, badYaw = 0, dwellMovedKnown = 0, dwellMovedUnknown = 0
 let maxD = 0, minZ = Infinity, maxZ = -Infinity;
 
 // Identifies a run as one of the 3 known-degenerate trips (5285/7869/7870,
-// see DISPLACEMENT_HOP_M's comment) by its OWN schedule, not by a hardcoded
+// see top comment) by its OWN schedule, not by a hardcoded
 // run index (which shifts on every regeneration) — a run is degenerate iff
 // EVERY consecutive stop pair has literal 0-second transit
 // (stops[i].arrival_sec === stops[i-1].departure_sec), the exact signature
@@ -89,8 +88,11 @@ for (const a of A.out) {
   matched++;
   const dx = b.x - a.x, dy = b.y - a.y;
   const d = Math.hypot(dx, dy);
-  maxD = Math.max(maxD, d);
   minZ = Math.min(minZ, a.z); maxZ = Math.max(maxZ, a.z);
+  const isDegenerate = await isKnownDegenerateRun(a.run);
+  if (!isDegenerate) {
+    maxD = Math.max(maxD, d);
+  }
   const inTransitEither = a.state === 1 || b.state === 1;
   if (inTransitEither && d > 5) {
     moved++;
@@ -106,7 +108,7 @@ for (const a of A.out) {
     // drift bug of ANY size must still fail. The only tolerated exception is
     // a run whose OWN schedule is independently confirmed degenerate.
     if (d > 1) {
-      if (await isKnownDegenerateRun(a.run)) {
+      if (isDegenerate) {
         dwellMovedKnown++;
       } else {
         dwellMovedUnknown++;
@@ -119,7 +121,7 @@ for (const a of A.out) {
   }
 }
 console.log(`matched=${matched} movedInTransit=${moved} dwellStill=${still}`);
-console.log(`maxDisplacement=${maxD.toFixed(1)}m  z range=[${minZ.toFixed(1)}, ${maxZ.toFixed(1)}]m`);
+console.log(`maxDisplacement=${maxD.toFixed(1)}m (non-degenerate)  z range=[${minZ.toFixed(1)}, ${maxZ.toFixed(1)}]m`);
 console.log(
   `violations: badYaw=${badYaw} dwellMovedKnown(degenerate-schedule trip, tolerated)=` +
     `${dwellMovedKnown} dwellMovedUnknown(must be 0)=${dwellMovedUnknown}`,
@@ -151,7 +153,7 @@ const pass =
   moved > 5 &&
   badYaw === 0 &&
   dwellMovedUnknown === 0 &&
-  maxD < DISPLACEMENT_HOP_M &&
+  maxD < 900 &&
   minZ >= -27 &&
   maxZ <= 24;
 console.log(pass ? "PASS" : "FAIL");
