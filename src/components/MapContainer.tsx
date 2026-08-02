@@ -13,6 +13,13 @@ import { installCameraControls } from "../map/cameraControls";
 import { FollowCamera } from "../map/followCamera";
 import { pickAt } from "../map/selection";
 import { skyPalette, sunDirection } from "../map/sun";
+import {
+  basemapTheme,
+  mixColor,
+  nightFactor,
+  parseColor,
+  type BasemapTheme,
+} from "../map/basemapTheme";
 import { VehicleManager } from "../map/VehicleManager";
 import { localToLngLat, ORIGIN_LNG_LAT } from "../map/coordinates";
 import { SimClient, activeSimClient } from "../sim/SimClient";
@@ -112,6 +119,71 @@ export function MapContainer() {
       applyUnderground(useAppStore.getState().undergroundMode);
       layer.setShadowsEnabled(useAppStore.getState().shadowsEnabled);
 
+      // Basemap day/night theming (Task 10b, human-added scope beyond
+      // SRS F3.3): `skyPalette` already re-lights the Three.js layer from
+      // the sim clock, but the MapLibre basemap itself kept its daytime
+      // colours at 02:00. This snapshots each themeable layer's *original*
+      // colour once — same discipline as `dimmable` above — and every
+      // later tick blends from that original toward the night target, never
+      // from the layer's current (already-blended) value, or the blend
+      // would compound every tick and drift the whole map to black.
+      // Colours only: this never touches a `*-opacity` paint property —
+      // that stays `dimmable`'s and `applyUnderground`'s alone.
+      type ThemeRole = keyof BasemapTheme;
+      type ColorProp =
+        | "background-color"
+        | "fill-color"
+        | "fill-extrusion-color"
+        | "line-color"
+        | "text-color"
+        | "text-halo-color";
+      const themeable: { id: string; prop: ColorProp; role: ThemeRole; original: string }[] = [];
+      let skippedExpressionLayers = 0;
+      const captureThemeable = (id: string, prop: ColorProp, role: ThemeRole) => {
+        const raw = map.getPaintProperty(id, prop);
+        if (raw === undefined) return; // no override on this layer; nothing to theme
+        if (typeof raw !== "string" || parseColor(raw) === null) {
+          // MapLibre expression (array) or stop-function (object), or a CSS
+          // colour syntax outside what parseColor supports (e.g. a named
+          // colour) — cannot be interpolated this way, so leave it alone.
+          skippedExpressionLayers++;
+          return;
+        }
+        themeable.push({ id, prop, role, original: raw });
+      };
+      for (const l of map.getStyle().layers) {
+        if (l.type === "background") captureThemeable(l.id, "background-color", "background");
+        else if (l.type === "fill")
+          captureThemeable(l.id, "fill-color", l.id.includes("water") ? "water" : "land");
+        else if (l.type === "fill-extrusion")
+          captureThemeable(l.id, "fill-extrusion-color", "building");
+        else if (l.type === "line") captureThemeable(l.id, "line-color", "road");
+        else if (l.type === "symbol") {
+          captureThemeable(l.id, "text-color", "labelText");
+          captureThemeable(l.id, "text-halo-color", "labelHalo");
+        }
+      }
+      if (import.meta.env.DEV) {
+        console.info(
+          `[basemapTheme] ${themeable.length} layer paint properties themeable, ` +
+            `${skippedExpressionLayers} skipped (expression/stop-function/unsupported colour syntax)`,
+        );
+      }
+
+      let lastNightBucket = -1;
+      const applyBasemapTheme = (elevationDeg: number) => {
+        const t = nightFactor(elevationDeg);
+        // Quantised to avoid dozens of no-op setPaintProperty calls a
+        // second while the sun barely moves (e.g. deep night or midday).
+        const bucket = Math.round(t * 200);
+        if (bucket === lastNightBucket) return;
+        lastNightBucket = bucket;
+        const theme = basemapTheme(elevationDeg);
+        for (const entry of themeable) {
+          map.setPaintProperty(entry.id, entry.prop, mixColor(entry.original, theme[entry.role], t));
+        }
+      };
+
       // Visibility is UI state, so it drives the scene through a subscription
       // rather than the per-frame path.
       unsubscribeVisibility = useAppStore.subscribe((state, prev) => {
@@ -187,6 +259,7 @@ export function MapContainer() {
         if (!client) return;
         const dir = sunDirection(client.getSimNow());
         layer.setSun(dir, skyPalette(dir.elevationDeg));
+        applyBasemapTheme(dir.elevationDeg);
       };
 
       // MapLibre only repaints on demand — keep frames coming while the
