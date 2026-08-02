@@ -131,6 +131,7 @@ export interface Strings {
   // ---- Support ----
   copy: string;
   copied: string;
+  bankTransfer: string;
   promptPayQrAlt: string;
   promptPayVerify: string;
 
@@ -310,6 +311,7 @@ const en: Strings = {
     "PromptPay QR code for donations",
   promptPayVerify:
     "Check the number under the code before you pay — it should match your banking app.",
+  bankTransfer: "Bank transfer",
 };
 
 const th: Partial<Strings> = {
@@ -467,6 +469,7 @@ const th: Partial<Strings> = {
     "คิวอาร์โค้ดพร้อมเพย์สำหรับบริจาค",
   promptPayVerify:
     "ก่อนโอน ตรวจเบอร์ใต้คิวอาร์ให้ตรงกับที่แอปธนาคารแสดงด้วยนะครับ",
+  bankTransfer: "โอนผ่านธนาคาร",
 };
 
 const zh: Partial<Strings> = {
@@ -622,6 +625,7 @@ const zh: Partial<Strings> = {
     "用于捐赠的 PromptPay 二维码",
   promptPayVerify:
     "付款前请核对二维码下方的号码，应与银行 App 显示的一致。",
+  bankTransfer: "银行转账",
 };
 
 const ja: Partial<Strings> = {
@@ -779,6 +783,7 @@ const ja: Partial<Strings> = {
     "寄付用の PromptPay QR コード",
   promptPayVerify:
     "送金前に、コード下の番号が銀行アプリの表示と一致するか確認してください。",
+  bankTransfer: "銀行振込",
 };
 
 const ko: Partial<Strings> = {
@@ -936,6 +941,7 @@ const ko: Partial<Strings> = {
     "기부용 PromptPay QR 코드",
   promptPayVerify:
     "결제 전에 코드 아래 번호가 은행 앱에 표시된 번호와 같은지 확인하세요.",
+  bankTransfer: "계좌 이체",
 };
 
 const fr: Partial<Strings> = {
@@ -1093,6 +1099,7 @@ const fr: Partial<Strings> = {
     "QR code PromptPay pour les dons",
   promptPayVerify:
     "Vérifiez le numéro sous le code avant de payer : il doit correspondre à celui de votre application bancaire.",
+  bankTransfer: "Virement bancaire",
 };
 
 const de: Partial<Strings> = {
@@ -1250,6 +1257,7 @@ const de: Partial<Strings> = {
     "PromptPay-QR-Code für Spenden",
   promptPayVerify:
     "Prüfen Sie vor dem Bezahlen die Nummer unter dem Code — sie muss der in Ihrer Banking-App entsprechen.",
+  bankTransfer: "Banküberweisung",
 };
 
 const ru: Partial<Strings> = {
@@ -1407,6 +1415,7 @@ const ru: Partial<Strings> = {
     "QR-код PromptPay для пожертвований",
   promptPayVerify:
     "Перед оплатой сверьте номер под кодом с тем, что показывает банковское приложение.",
+  bankTransfer: "Банковский перевод",
 };
 
 const es: Partial<Strings> = {
@@ -1564,6 +1573,7 @@ const es: Partial<Strings> = {
     "Código QR de PromptPay para donaciones",
   promptPayVerify:
     "Antes de pagar, comprueba que el número bajo el código coincida con el de tu app bancaria.",
+  bankTransfer: "Transferencia bancaria",
 };
 
 /**

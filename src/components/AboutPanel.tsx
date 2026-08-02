@@ -31,11 +31,14 @@ const LINK =
 function CopyableId({
   label,
   value,
+  display,
   copyLabel,
   copiedLabel,
 }: {
   label: string;
   value: string;
+  /** How to show it; the copied text is always the bare digits. */
+  display?: string;
   copyLabel: string;
   copiedLabel: string;
 }) {
@@ -45,7 +48,7 @@ function CopyableId({
       <span className="text-[10px] uppercase tracking-wide text-slate-400">{label}</span>
       <br />
       <span className="select-all font-mono text-sm tabular-nums text-slate-900">
-        {formatMobile(value)}
+        {display ?? formatMobile(value)}
       </span>{" "}
       <button
         type="button"
@@ -66,6 +69,19 @@ function CopyableId({
       </button>
     </p>
   );
+}
+
+/**
+ * Group a Thai bank account number the way a passbook prints it.
+ *
+ * A ten-digit number read off a screen in one run is where a digit gets
+ * dropped; anything that is not ten digits is left alone rather than forced
+ * into a shape it does not have.
+ */
+function formatBankAccount(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length !== 10) return raw;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 9)}-${digits.slice(9)}`;
 }
 
 export function AboutPanel() {
@@ -181,6 +197,15 @@ export function AboutPanel() {
                     <CopyableId
                       label="TrueMoney Wallet"
                       value={SUPPORT.trueMoneyId}
+                      copyLabel={t.copy}
+                      copiedLabel={t.copied}
+                    />
+                  )}
+                  {SUPPORT.bankAccount && (
+                    <CopyableId
+                      label={`${t.bankTransfer} · ${SUPPORT.bankAccount.bank}`}
+                      value={SUPPORT.bankAccount.number}
+                      display={formatBankAccount(SUPPORT.bankAccount.number)}
                       copyLabel={t.copy}
                       copiedLabel={t.copied}
                     />

@@ -30,6 +30,22 @@
  *   two ever disagree.
  * - `trueMoneyId` — a TrueMoney Wallet mobile number, shown as text. TrueMoney
  *   also scans PromptPay codes, so the QR above works for it too.
+ * - `bankAccount` — a plain bank transfer, shown as text only.
+ *
+ *   Deliberately **not** encoded into the QR. PromptPay is keyed to a
+ *   registered identifier — a mobile number, a national ID or an e-wallet id —
+ *   not to a raw account number; the account is what the identifier resolves
+ *   to at the bank. The EMVCo template does reserve a bank-account tag, but
+ *   support for it across Thai banking apps is inconsistent, and a code that
+ *   silently fails to resolve for some payers is worse than one identifier that
+ *   works for all of them. So the existing PromptPay QR stays keyed to the
+ *   mobile number, which already reaches whatever account is registered to it,
+ *   and the account number is offered beside it for anyone who would rather
+ *   type it in.
+ *
+ *   No `name` is set unless the owner supplies one: Thai banking apps show the
+ *   recipient's name for confirmation once the number is entered, so an
+ *   invented one would be both unnecessary and misleading.
  * - `custom` — any other page, with your own label.
  *
  * ## Why the UI is shaped the way it is
@@ -48,12 +64,14 @@ export interface SupportLinks {
   buyMeACoffee?: string;
   promptPayId?: string;
   trueMoneyId?: string;
+  bankAccount?: { bank: string; number: string; name?: string };
   custom?: { label: string; url: string };
 }
 
 export const SUPPORT: SupportLinks = {
   promptPayId: "0958462520",
   trueMoneyId: "0958462520",
+  bankAccount: { bank: "SCB", number: "7662519586" },
   // githubSponsors: "https://github.com/sponsors/yourname",
   // kofi: "https://ko-fi.com/yourname",
 };
@@ -83,6 +101,7 @@ export function hasSupportLinks(links: SupportLinks = SUPPORT): boolean {
       links.buyMeACoffee ||
       links.promptPayId ||
       links.trueMoneyId ||
+      links.bankAccount ||
       links.custom,
   );
 }

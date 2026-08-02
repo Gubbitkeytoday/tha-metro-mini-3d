@@ -22,6 +22,20 @@ import { promptPayPayload } from "../src/lib/promptpay.ts";
 const repo = resolve(import.meta.dirname, "..");
 const qrPath = resolve(repo, "public/promptpay-qr.svg");
 
+describe("the bank account is not encoded into the QR", () => {
+  it("keeps the QR keyed to the PromptPay identifier", () => {
+    // PromptPay resolves a registered identifier — mobile, national ID or
+    // e-wallet — to an account; it is not addressed by raw account number. A
+    // code built from one would fail to resolve in some banking apps, and a
+    // payment code that works for only some payers is worse than one
+    // identifier that works for all of them.
+    if (!SUPPORT.promptPayId || !SUPPORT.bankAccount) return;
+    const payload = promptPayPayload(SUPPORT.promptPayId);
+    expect(payload).not.toContain(SUPPORT.bankAccount.number.replace(/\D/g, ""));
+    expect(payload).toContain("0113"); // tag 01 = mobile, 13 chars
+  });
+});
+
 describe("the committed PromptPay QR", () => {
   it("exists whenever an account is configured", () => {
     if (!SUPPORT.promptPayId) return;
@@ -67,6 +81,13 @@ describe("support configuration", () => {
     }
     if (SUPPORT.trueMoneyId) {
       expect(SUPPORT.trueMoneyId.replace(/\D/g, "")).toMatch(/^0\d{9}$/);
+    }
+    // A Thai bank account is ten digits. Checking the length is the only claim
+    // that can be made from here — no checksum is published for these — but it
+    // does catch a transposed or dropped digit at the ends.
+    if (SUPPORT.bankAccount) {
+      expect(SUPPORT.bankAccount.number.replace(/\D/g, "")).toMatch(/^\d{10}$/);
+      expect(SUPPORT.bankAccount.bank.length).toBeGreaterThan(0);
     }
   });
 
