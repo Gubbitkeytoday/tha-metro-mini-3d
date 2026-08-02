@@ -227,19 +227,28 @@ async function fetchBranch(relationId, branchKey, defaultStructure) {
 
 /** Resolve a relation id from `osm.match` when none is pinned. */
 async function discoverRelationId(line) {
+  // Under-construction alignments (MRT Orange, Purple Phase 2) are tagged
+  // route=construction + construction:route=subway, NOT route=subway — the
+  // operational-only filter never matches them.
   const data = await overpass(
-    `[out:json][timeout:60];
-     relation["route"~"train|light_rail|subway|monorail"](13.4,100.2,14.3,101.0);
+    `[out:json][timeout:90];
+     (
+       relation["route"~"train|light_rail|subway|monorail"](13.4,100.2,14.3,101.0);
+       relation["construction:route"~"train|light_rail|subway|monorail"](13.4,100.2,14.3,101.0);
+       relation["proposed:route"~"train|light_rail|subway|monorail"](13.4,100.2,14.3,101.0);
+     );
      out tags;`,
   );
   const candidates = data.elements.filter(
     (e) =>
-      e.tags?.type === "route" &&
+      (e.tags?.type === "route" || e.tags?.type === "construction:route") &&
       line.osm.match.test(`${e.tags["name:en"] ?? ""} ${e.tags.name ?? ""}`) &&
       !/supplementary/i.test(e.tags["name:en"] ?? ""),
   );
   console.log(`${line.key}: ${candidates.length} candidate relation(s)`);
-  for (const c of candidates) console.log(`  ${c.id} | ${c.tags["name:en"] ?? c.tags.name}`);
+  for (const c of candidates) {
+    console.log(`  ${c.id} | ${c.tags["name:en"] ?? c.tags.name} | ${c.tags.route ?? c.tags["construction:route"]}`);
+  }
   if (candidates.length === 0) throw new Error(`${line.key}: no relation matched ${line.osm.match}`);
   // Route relations come in directional pairs — either variant's track is fine.
   console.log(`  -> pin osm.relationId: ${candidates[0].id} in tools/lines.config.mjs`);

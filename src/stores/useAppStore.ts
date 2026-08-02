@@ -65,6 +65,17 @@ interface AppState {
   hiddenRoutes: number[];
   toggleRoute: (routeIdx: number) => void;
   isRouteVisible: (routeIdx: number) => boolean;
+
+  // ---- MVP 6 view modes (F3.2 / §3A.5) ----
+
+  /** Underground transparency: dim the basemap and the surface network so
+   *  sub-surface track is the subject (SRS §F3.2). */
+  undergroundMode: boolean;
+  setUndergroundMode: (on: boolean) => void;
+
+  /** Shadow quality toggle — off by default for the 30-FPS mobile target. */
+  shadowsEnabled: boolean;
+  setShadowsEnabled: (on: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -119,4 +130,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         : [...s.hiddenRoutes, routeIdx],
     })),
   isRouteVisible: (routeIdx) => !get().hiddenRoutes.includes(routeIdx),
+
+  undergroundMode: false,
+  setUndergroundMode: (on) => set({ undergroundMode: on }),
+
+  shadowsEnabled: false,
+  setShadowsEnabled: (on) => set({ shadowsEnabled: on }),
 }));

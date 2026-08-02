@@ -34,6 +34,11 @@ export class NetworkLayer implements CustomLayerInterface {
   private lineMaterials: LineMaterial[] = [];
   /** Per-line groups, index == route_idx — the unit the line selector toggles. */
   private lineGroups: THREE.Group[] = [];
+  /** Every material tagged by elevation band, so the underground mode can
+   *  re-weight the two sets without walking the scene graph each toggle. */
+  private surfaceMaterials: THREE.Material[] = [];
+  private subsurfaceMaterials: THREE.Material[] = [];
+  private undergroundMode = false;
 
   /**
    * Per-frame hook, invoked at the start of every render() before drawing —
@@ -74,6 +79,65 @@ export class NetworkLayer implements CustomLayerInterface {
     }
     if (this.vehicles) scene.add(...this.vehicles.meshes);
     this.scene = scene;
+    this.indexMaterialsByBand(scene);
+    this.applyUndergroundMode();
+  }
+
+  /**
+   * Walk the scene once and sort every track material into the surface or
+   * sub-surface bucket, using the `userData.structure` tag buildTrackDeck
+   * stamps on each run's mesh. Station markers and centerlines follow their
+   * line's dominant band — a line with any underground run counts as
+   * sub-surface for the purposes of the mode, because that is what the user
+   * is asking to see.
+   */
+  private indexMaterialsByBand(_scene: THREE.Scene): void {
+    for (const group of this.lineGroups) {
+      const structures = new Set<string>();
+      group.traverse((obj) => {
+        const s = obj.userData?.structure;
+        if (typeof s === "string") structures.add(s);
+      });
+      const hasSubsurface = structures.has("underground");
+      group.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh) && !(obj instanceof THREE.InstancedMesh)) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        const band =
+          obj.userData?.structure === "underground" || (hasSubsurface && !obj.userData?.structure)
+            ? this.subsurfaceMaterials
+            : this.surfaceMaterials;
+        band.push(...mats);
+      });
+    }
+  }
+
+  /**
+   * Re-weight the two bands. Off: sub-surface geometry is translucent and
+   * does not write depth, so it reads as "beneath" without needing real
+   * depth interop with MapLibre's tiles (§3A.4 — that is the open-ended
+   * problem this deliberately sidesteps). On: sub-surface goes fully opaque
+   * and the surface network recedes.
+   */
+  private applyUndergroundMode(): void {
+    const on = this.undergroundMode;
+    for (const m of this.subsurfaceMaterials) {
+      m.transparent = !on;
+      m.opacity = on ? 1 : 0.35;
+      m.depthWrite = on;
+      m.needsUpdate = true;
+    }
+    for (const m of this.surfaceMaterials) {
+      m.transparent = on;
+      m.opacity = on ? 0.3 : 1;
+      m.depthWrite = !on;
+      m.needsUpdate = true;
+    }
+  }
+
+  setUndergroundMode(on: boolean): void {
+    if (on === this.undergroundMode) return;
+    this.undergroundMode = on;
+    this.applyUndergroundMode();
   }
 
   /** Show/hide one line's track + stations. Vehicles are hidden separately by
@@ -108,6 +172,8 @@ export class NetworkLayer implements CustomLayerInterface {
     this.scene = null;
     this.lineMaterials = [];
     this.lineGroups = [];
+    this.surfaceMaterials = [];
+    this.subsurfaceMaterials = [];
     // The GL context belongs to MapLibre — dispose Three's wrapper only.
     this.renderer?.dispose();
     this.renderer = null;

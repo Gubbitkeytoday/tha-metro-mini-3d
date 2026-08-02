@@ -77,30 +77,53 @@ export function MapContainer() {
       map.addLayer(layer);
       setMapReady(true);
       store.setRoutes(net.lines);
-      // Seed the layer/vehicle-manager visibility from whatever hiddenRoutes
-      // already holds at mount time — on a cold load this is always [], but
-      // the subscription below only reacts to *changes*, so without this a
-      // remount with pre-existing hidden routes (future persistence, or a
-      // React StrictMode double-invoke in dev) would render every line
-      // visible until the next toggle.
-      {
-        const initial = useAppStore.getState();
-        for (let i = 0; i < net.lines.length; i++) {
-          const visible = initial.isRouteVisible(i);
-          layer.setLineVisible(i, visible);
-          vehicleManager.setRouteVisible(i, visible);
+      // MapLibre side of the underground mode. Layer IDs are discovered from
+      // the loaded style rather than hardcoded: this is OpenFreeMap's Liberty
+      // style today, and hardcoded ids would break silently if it changes or
+      // is swapped. `fill-extrusion` is the 3D buildings; `fill` is landuse
+      // and water. SRS §F3.2 specifies the 0.1–0.4 opacity band.
+      const UNDERGROUND_BASEMAP_OPACITY = 0.25;
+      const dimmable = map
+        .getStyle()
+        .layers.filter((l) => l.type === "fill-extrusion" || l.type === "fill")
+        .map((l) => {
+          const prop = (
+            l.type === "fill-extrusion" ? "fill-extrusion-opacity" : "fill-opacity"
+          ) as "fill-extrusion-opacity" | "fill-opacity";
+          return {
+            id: l.id,
+            prop,
+            original: (map.getPaintProperty(l.id, prop) as number | undefined) ?? 1,
+          };
+        });
+
+      const applyUnderground = (on: boolean) => {
+        layer.setUndergroundMode(on);
+        for (const d of dimmable) {
+          map.setPaintProperty(
+            d.id,
+            d.prop,
+            on ? Math.min(d.original, UNDERGROUND_BASEMAP_OPACITY) : d.original,
+          );
         }
-      }
+        map.triggerRepaint();
+      };
+      applyUnderground(useAppStore.getState().undergroundMode);
+
       // Visibility is UI state, so it drives the scene through a subscription
       // rather than the per-frame path.
       unsubscribeVisibility = useAppStore.subscribe((state, prev) => {
-        if (state.hiddenRoutes === prev.hiddenRoutes) return;
-        for (let i = 0; i < net.lines.length; i++) {
-          const visible = state.isRouteVisible(i);
-          layer.setLineVisible(i, visible);
-          vehicleManager.setRouteVisible(i, visible);
+        if (state.hiddenRoutes !== prev.hiddenRoutes) {
+          for (let i = 0; i < net.lines.length; i++) {
+            const visible = !state.hiddenRoutes.includes(i);
+            layer.setLineVisible(i, visible);
+            vehicleManager.setRouteVisible(i, visible);
+          }
+          map.triggerRepaint();
         }
-        map.triggerRepaint();
+        if (state.undergroundMode !== prev.undergroundMode) {
+          applyUnderground(state.undergroundMode);
+        }
       });
 
       store.setEngineStatus("loading");

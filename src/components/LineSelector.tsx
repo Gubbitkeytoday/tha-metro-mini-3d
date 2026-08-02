@@ -1,5 +1,6 @@
 import { useAppStore } from "../stores/useAppStore";
 import type { LineGeometry } from "../types";
+import { ViewControls } from "./ViewControls";
 
 /** One toggleable row — its own component so it can call the store's
  * `isRouteVisible` selector directly (the canonical, tested "is this route
@@ -63,6 +64,7 @@ export function LineSelector() {
           ))}
         </ul>
       )}
+      <ViewControls />
     </div>
   );
 }
