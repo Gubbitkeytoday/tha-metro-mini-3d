@@ -277,6 +277,13 @@ fn run() -> Result<(), String> {
     let proj = EnuProjector::new(ORIGIN_LNG_LAT.0, ORIGIN_LNG_LAT.1);
     let mut routes: Vec<RouteDoc> = Vec::new();
     let mut station_maps: Vec<HashMap<String, u16>> = Vec::new(); // stop_id -> station_idx
+    // stop_id -> every local-minimum candidate position on this route's
+    // polyline (task 5: a route whose alignment passes near itself twice,
+    // e.g. MRT Blue's loop-plus-branch joint at Tha Phra, has stops with
+    // more than one candidate). Parallel to station_maps; used by the
+    // pattern-building loop below to pick the candidate consistent with
+    // each specific pattern's direction, not just the closest one overall.
+    let mut candidate_maps: Vec<HashMap<String, Vec<(f64, f64)>>> = Vec::new();
     // Tracked separately from large_snap_exceptions below so a disclosed,
     // known exception (e.g. the Pink terminus's 555 m coordinate quirk)
     // doesn't hide a genuinely-bad snap on some other, future line — an
@@ -295,6 +302,7 @@ fn run() -> Result<(), String> {
 
         // Snap each station onto this line's polyline. (stop_id, snap_d, doc)
         let mut snapped: Vec<(String, f64, StationDoc)> = Vec::new();
+        let mut stop_candidates: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
 
         match line.gtfs_route_id.as_deref() {
             Some(route_id) => {
@@ -321,7 +329,12 @@ fn run() -> Result<(), String> {
                 for stop_id in route_stop_ids {
                     let row = &stop_rows[stop_id];
                     let p = proj.project(row.lon, row.lat, 0.0);
-                    let (arc_m, snap_d) = spline::snap_to_polyline(&poly, &arcs, [p[0], p[1]]);
+                    let candidates = spline::snap_candidates(&poly, &arcs, [p[0], p[1]]);
+                    let (arc_m, snap_d) = *candidates
+                        .iter()
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .expect("snap_candidates always returns >= 1 candidate");
+                    stop_candidates.insert(stop_id.clone(), candidates);
                     let large_snap_allowed = line
                         .allow_large_snap_stop_ids
                         .iter()
@@ -483,6 +496,7 @@ fn run() -> Result<(), String> {
             stations: snapped.into_iter().map(|(_, _, s)| s).collect(),
         });
         station_maps.push(map);
+        candidate_maps.push(stop_candidates);
     }
 
     link_interchanges(&mut routes, INTERCHANGE_RADIUS_M, &track_file.interchange_overrides);
@@ -526,20 +540,54 @@ fn run() -> Result<(), String> {
             .get(&trip.trip_id)
             .ok_or(format!("trip {} has no stop_times", trip.trip_id))?;
         let t0 = rows.first().map(|r| r.arrival_s).unwrap_or(0);
-        let mut stops = Vec::with_capacity(rows.len());
-        let mut prev_arr = 0u32;
+
+        // Resolve every row's station_idx up front so the per-pattern
+        // monotonic arc solver (task 5) sees the whole pattern's candidate
+        // lists at once — which candidate is correct for an ambiguous stop
+        // (a route that passes near itself twice, e.g. MRT Blue at Tha
+        // Phra) depends on this trip's OTHER stops, not on the stop alone.
+        let mut station_idxs = Vec::with_capacity(rows.len());
+        let mut candidate_lists = Vec::with_capacity(rows.len());
         for row in rows {
             let station_idx = *station_maps[route_idx]
                 .get(&row.stop_id)
                 .ok_or(format!("trip {}: unknown stop id {}", trip.trip_id, row.stop_id))?;
+            station_idxs.push(station_idx);
+            candidate_lists.push(
+                candidate_maps[route_idx]
+                    .get(&row.stop_id)
+                    .cloned()
+                    .ok_or(format!(
+                        "trip {}: stop {} has no snap candidates recorded",
+                        trip.trip_id, row.stop_id
+                    ))?,
+            );
+        }
+        let (resolved_arcs, used_fallback) = resolve_pattern_arcs(&candidate_lists);
+
+        let mut stops = Vec::with_capacity(rows.len());
+        let mut prev_arr = 0u32;
+        for (i, row) in rows.iter().enumerate() {
             let arrival_s = row.arrival_s - t0; // relative offsets; first stop = 0
             let departure_s = row.departure_s - t0;
             if departure_s < arrival_s || arrival_s < prev_arr {
                 return Err(format!("trip {}: non-monotonic stop times", trip.trip_id));
             }
             prev_arr = arrival_s;
-            let arc_m = routes[route_idx].stations[station_idx as usize].arc_m;
-            stops.push(PatternStop { station_idx, arrival_s, departure_s, arc_m });
+            if used_fallback[i] {
+                eprintln!(
+                    "warning: trip {} stop {} (station_idx {}): no snap candidate stayed \
+                     consistent with this pattern's direction — used its plain nearest \
+                     position instead of inventing one",
+                    trip.trip_id, row.stop_id, station_idxs[i]
+                );
+            }
+            stops.push(PatternStop {
+                station_idx: station_idxs[i],
+                arrival_s,
+                departure_s,
+                arc_m: resolved_arcs[i] as f32,
+            });
         }
         let (_, headsign_en) = gtfs::split_th_en(&trip.headsign);
         pattern_idx_by_trip.insert(trip.trip_id.clone(), patterns.len() as u16);
@@ -813,6 +861,107 @@ fn runs_for_pattern(
     runs
 }
 
+/// Chooses one arc position per stop for a single pattern, from each stop's
+/// candidate list (`spline::snap_candidates`), such that the chosen arcs are
+/// monotonic along the pattern's own direction of travel.
+///
+/// Needed because a station-level global-nearest snap (the pre-task-5
+/// behaviour) is wrong whenever a route's alignment passes close to the same
+/// real-world point more than once — MRT Blue's loop-plus-branch joint at
+/// Tha Phra, where the alignment comes back near itself ~38 km later in arc
+/// terms. A single stop can then have >1 legitimate candidate position, and
+/// which one is correct depends on the OTHER stops in that specific
+/// pattern, not on the stop in isolation.
+///
+/// Direction is not read from GTFS `direction_id` (unreliable/not always
+/// present in this feed). It's decided by voting: each stop's own plain
+/// nearest candidate (ignoring any cross-stop constraint) gives one data
+/// point per consecutive pair — does it trend up or down? A pattern of N
+/// stops gives N-1 votes, so one ambiguous stop (the common case — MRT
+/// Blue's patterns are 8-30 stops long with at most one or two
+/// self-approach joints each) can't flip the outcome; only the SUM of
+/// consecutive-pair total cost was tried first and rejected — for a
+/// single-candidate stop the chosen arc (and its distance) is identical
+/// regardless of which direction is assumed, so that stop's cost cancels out
+/// of any forward-vs-reverse comparison and the "total cost" signal ends up
+/// decided almost entirely by whichever raw distance happens to be smaller
+/// at the one ambiguous stop — not by the surrounding context that should
+/// settle it. Voting on trend, not cost, uses that context properly.
+///
+/// Once direction is decided, a single constrained walk assigns each stop
+/// the nearest candidate consistent with the running arc so far. The walk
+/// always runs in "forward" order — for a reverse-direction pattern the stop
+/// list is reversed first and the result reversed back — so the walk's
+/// FIRST stop, which has no earlier constraint to check against, is always
+/// the run's true start, not (for a reverse pattern) its end; anchoring an
+/// ambiguous stop from `None` context would just take its raw nearest
+/// candidate regardless of direction, which is exactly the original bug.
+///
+/// For an ordinary stop with one candidate this is a no-op: direction can
+/// only ever keep or drop that one candidate, and when kept, the result is
+/// identical to the old global-nearest behaviour.
+///
+/// Returns (chosen arc per stop, whether that stop's choice was a fallback —
+/// no candidate fit the running direction, so the stop's plain nearest
+/// candidate overall was used instead, breaking monotonicity rather than
+/// inventing a position). The caller logs any fallback.
+fn resolve_pattern_arcs(candidate_lists: &[Vec<(f64, f64)>]) -> (Vec<f64>, Vec<bool>) {
+    fn nearest(cands: &[(f64, f64)]) -> (f64, f64) {
+        *cands
+            .iter()
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .expect("snap_candidates always returns >= 1 candidate")
+    }
+
+    /// One constrained pass, always in the "forward" (arc non-decreasing)
+    /// sense — the caller reverses the input/output for the other direction.
+    fn walk_forward(lists: &[Vec<(f64, f64)>]) -> (Vec<f64>, Vec<bool>) {
+        let mut arcs = Vec::with_capacity(lists.len());
+        let mut fallback = Vec::with_capacity(lists.len());
+        let mut prev: Option<f64> = None;
+        for cands in lists {
+            let consistent = cands.iter().filter(|&&(a, _)| prev.is_none_or(|p| a >= p));
+            let (a, is_fallback) = match consistent.min_by(|x, y| x.1.total_cmp(&y.1)) {
+                Some(&(a, _)) => (a, false),
+                // No candidate keeps this pattern monotonic here — a real
+                // geometry/schedule problem. Fall back to the plain nearest
+                // rather than inventing a position; the caller logs this.
+                None => (nearest(cands).0, true),
+            };
+            arcs.push(a);
+            fallback.push(is_fallback);
+            prev = Some(a);
+        }
+        (arcs, fallback)
+    }
+
+    if candidate_lists.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let global_nearest: Vec<f64> = candidate_lists.iter().map(|c| nearest(c).0).collect();
+    let mut votes = 0i32;
+    for w in global_nearest.windows(2) {
+        votes += match w[1].total_cmp(&w[0]) {
+            std::cmp::Ordering::Greater => 1,
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+        };
+    }
+    let forward = votes >= 0; // tie defaults forward — no signal either way
+
+    if forward {
+        walk_forward(candidate_lists)
+    } else {
+        let mut reversed: Vec<Vec<(f64, f64)>> = candidate_lists.to_vec();
+        reversed.reverse();
+        let (mut arcs, mut fallback) = walk_forward(&reversed);
+        arcs.reverse();
+        fallback.reverse();
+        (arcs, fallback)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1024,5 +1173,92 @@ mod tests {
             routes[2].stations[0].interchanges.is_empty(),
             "route 'c' shares the stop id but was not named in the override"
         );
+    }
+
+    // --- resolve_pattern_arcs (task 5: MRT Blue self-approaching track) ----
+
+    #[test]
+    fn resolve_pattern_arcs_is_a_no_op_for_an_ordinary_single_candidate_stop() {
+        // The overwhelmingly common case: every stop has exactly one
+        // candidate (snap_candidates found no self-approach), so the
+        // per-pattern solver must reproduce the plain global-nearest answer
+        // for all nine pre-Blue lines exactly.
+        let lists = vec![vec![(0.0, 3.0)], vec![(500.0, 8.0)], vec![(1200.0, 2.0)]];
+        let (arcs, fallback) = resolve_pattern_arcs(&lists);
+        assert_eq!(arcs, vec![0.0, 500.0, 1200.0]);
+        assert_eq!(fallback, vec![false, false, false]);
+    }
+
+    /// The real bug's shape, minimized but with enough surrounding
+    /// unambiguous stops to give the direction vote real signal (a real
+    /// Blue pattern is 8-30 stops long with at most one or two ambiguous
+    /// self-approach joints — a bare 2-stop pattern would be genuinely
+    /// underdetermined and isn't representative).
+    fn tao_poon_to_tha_phra_pattern() -> Vec<Vec<(f64, f64)>> {
+        vec![
+            vec![(1_000.0, 2.0)],  // Tao Poon
+            vec![(5_000.0, 2.0)],  // Bang Pho
+            vec![(15_000.0, 2.0)], // ...several ordinary stops...
+            vec![(30_000.0, 2.0)], // Fai Chai
+            vec![(45_000.0, 5.0)], // Charan 13: one pass only
+            vec![(7_400.0, 38.9), (46_900.0, 45.0)], // Tha Phra: two passes
+        ]
+    }
+
+    #[test]
+    fn resolve_pattern_arcs_picks_the_second_pass_when_the_pattern_needs_it() {
+        let (arcs, fallback) = resolve_pattern_arcs(&tao_poon_to_tha_phra_pattern());
+        assert_eq!(
+            arcs,
+            vec![1_000.0, 5_000.0, 15_000.0, 30_000.0, 45_000.0, 46_900.0],
+            "must pick Tha Phra's second pass (46,900), consistent with the whole pattern's \
+             increasing trend, not its nearer-by-itself but topologically wrong first pass (7,400)"
+        );
+        assert_eq!(fallback, vec![false; 6]);
+    }
+
+    #[test]
+    fn resolve_pattern_arcs_handles_a_reverse_direction_pattern() {
+        // The opposite-direction trip: same stops, schedule order reversed.
+        // A naive ">=" monotonic rule would wrongly reject this whole
+        // pattern; the solver must recognise the descending trend and pick
+        // Tha Phra's second pass again — now as the FIRST stop, which is
+        // exactly the boundary case a naive "no prior constraint" walk gets
+        // wrong (it would just grab Tha Phra's globally-nearest candidate,
+        // 7,400, ignoring where the rest of the pattern needs it to be).
+        let mut lists = tao_poon_to_tha_phra_pattern();
+        lists.reverse();
+        let (arcs, fallback) = resolve_pattern_arcs(&lists);
+        assert_eq!(
+            arcs,
+            vec![46_900.0, 45_000.0, 30_000.0, 15_000.0, 5_000.0, 1_000.0],
+            "reverse-direction pattern: Tha Phra's second pass again, now first in the list"
+        );
+        assert_eq!(fallback, vec![false; 6]);
+    }
+
+    #[test]
+    fn resolve_pattern_arcs_tolerates_a_flat_step_with_a_tied_vote() {
+        // Two consecutive stops at the exact same arc position (a real,
+        // if unusual, possibility — e.g. two very close-together stops that
+        // snap to the same resampled point) contribute a zero (tied) vote;
+        // the pattern must still resolve cleanly with no fallback.
+        let lists = vec![vec![(100.0, 1.0)], vec![(100.0, 1.0)], vec![(200.0, 1.0)]];
+        let (arcs, fallback) = resolve_pattern_arcs(&lists);
+        assert_eq!(arcs, vec![100.0, 100.0, 200.0]);
+        assert_eq!(fallback, vec![false, false, false], "single-candidate stops never fall back");
+    }
+
+    #[test]
+    fn resolve_pattern_arcs_falls_back_and_reports_when_no_candidate_fits() {
+        // Stop 1's only candidate (50) is LESS than stop 0's (100), breaking
+        // the forward trend the other 2 stops establish (100 -> 300 votes
+        // forward). No candidate keeps it consistent — must not invent a
+        // position: fall back to stop 1's nearest candidate overall (its
+        // only one) and flag it, then resume the constrained walk normally.
+        let lists = vec![vec![(100.0, 1.0)], vec![(50.0, 1.0)], vec![(300.0, 1.0)]];
+        let (arcs, fallback) = resolve_pattern_arcs(&lists);
+        assert_eq!(arcs, vec![100.0, 50.0, 300.0], "fallback still uses the real (only) position");
+        assert_eq!(fallback, vec![false, true, false], "only the inconsistent stop is flagged");
     }
 }

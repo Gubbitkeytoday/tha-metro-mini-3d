@@ -192,6 +192,34 @@ export const LINES = [
     preRevenue: false,
     osm: { relationId: 13178788, match: /light red|red line.*taling chan/i },
   },
+  {
+    key: "blue",
+    name: "MRT Blue Line",
+    nameTh: "สายสีน้ำเงิน",
+    // Feed route_color (1964B7) from tools/inspect-gtfs.mjs.
+    color: "#1964B7",
+    // DEFAULT only: MRT Blue's real alignment is mixed. Per-point structure
+    // comes from each OSM way's tunnel/bridge/layer tags (Task 2). Elevated
+    // is the safer fallback for an untagged way — a mis-defaulted underground
+    // segment would sink through the ground plane invisibly, while a
+    // mis-defaulted elevated one is obvious on screen.
+    structure: "elevated",
+    vehicleType: "heavy",
+    gtfsRouteId: "3",
+    preRevenue: false,
+    // Discovery (npm run data:fetch -- blue) returned 2 candidates, both
+    // directional variants of the full alignment (no short-turn variant
+    // appeared): 444659 "MRT Blue Line (Tha Phra -> Lak Song)" and 7725025
+    // "MRT Blue Line (Lak Song -> Tha Phra)". Picked 444659 (either
+    // direction's track is fine, per fetch-network.mjs's own comment) —
+    // confirmed it covers the full loop-plus-branch alignment: the committed
+    // network.json (full `npm run data:fetch` run) has 494 track points with
+    // BOTH elevated:234 and underground:260, not a partial/short-turn subset.
+    // (The single-line `-- blue` fetch used to pick this id logged 495/261 —
+    // a one-point delta from a way-join dedup step that only fires when all
+    // ten lines are fetched together; not a discrepancy worth chasing.)
+    osm: { relationId: 444659, match: /blue/i },
+  },
 ];
 
 /**
@@ -205,6 +233,22 @@ export const INTERCHANGE_OVERRIDES = [
   // are ~555 m apart (Purple's PP11 vs Pink's PK01, confirmed against OSM
   // node tags — see the allowLargeSnapStopIds note on the `pink` entry).
   { aLine: "purple", aStop: "359", bLine: "pink", bStop: "359" },
+  // BTS Silom <-> MRT Blue, Sala Daeng / Si Lom. A real, heavily-used
+  // interchange (shared paid-area walkway) that the 300 m auto-link radius
+  // does not reach: measured 319.3 m between the two stations' actual
+  // snapped-onto-track positions (a temporary debug print in
+  // link_interchanges, task 5, since reverted — not a bug, just outside the
+  // radius). GTFS stop ids: Silom's Sala Daeng is "10", Blue's Si Lom is
+  // "329" (per inspect-gtfs.mjs / preprocessor snap-warning stop names).
+  { aLine: "silom", aStop: "10", bLine: "blue", bStop: "329" },
+  // Airport Rail Link <-> MRT Blue, Phetchaburi / Makkasan. Also real and
+  // heavily used. Measured 304.8 m between the two stations' snapped-onto-
+  // track positions (same temporary debug print as above) — just outside
+  // the 300 m radius, not a link_interchanges bug (both stops individually
+  // snap within 40 m of their own line's GTFS coordinates, so the shortfall
+  // is genuine geometry, not a snap artifact). GTFS stop ids: ARL's Makkasan
+  // is "324", Blue's Phetchaburi is "345".
+  { aLine: "arl", aStop: "324", bLine: "blue", bStop: "345" },
 ];
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
