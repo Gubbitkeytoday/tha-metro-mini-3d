@@ -264,8 +264,8 @@ will ask you twice.
 
 <img src="public/promptpay-qr.svg" alt="PromptPay QR code" width="150" align="left" hspace="16" vspace="4">
 
-**PromptPay** · 095-846-2520
-**TrueMoney Wallet** · 095-846-2520
+**PromptPay** · `095-846-2520`<br>
+**TrueMoney Wallet** · `095-846-2520`
 
 Check the number your banking app shows against the digits above before you
 confirm. The QR is generated at build time by `npm run promptpay:qr` from
