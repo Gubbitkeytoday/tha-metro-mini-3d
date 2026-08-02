@@ -110,6 +110,7 @@ export function MapContainer() {
         map.triggerRepaint();
       };
       applyUnderground(useAppStore.getState().undergroundMode);
+      layer.setShadowsEnabled(useAppStore.getState().shadowsEnabled);
 
       // Visibility is UI state, so it drives the scene through a subscription
       // rather than the per-frame path.
@@ -124,6 +125,10 @@ export function MapContainer() {
         }
         if (state.undergroundMode !== prev.undergroundMode) {
           applyUnderground(state.undergroundMode);
+        }
+        if (state.shadowsEnabled !== prev.shadowsEnabled) {
+          layer.setShadowsEnabled(state.shadowsEnabled);
+          map.triggerRepaint();
         }
       });
 

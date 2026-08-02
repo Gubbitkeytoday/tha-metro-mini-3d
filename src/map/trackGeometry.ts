@@ -212,7 +212,10 @@ function sweepDeck(
     transparent: preRevenue,
     opacity: preRevenue ? 0.55 : 1,
   });
-  return new THREE.Mesh(geometry, material);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
 }
 
 /**
@@ -339,6 +342,11 @@ export function buildStationMarkers(lines: LineGeometry[]): THREE.Object3D {
   discs.instanceMatrix.needsUpdate = true;
   if (discs.instanceColor) discs.instanceColor.needsUpdate = true;
   poles.instanceMatrix.needsUpdate = true;
+
+  discs.castShadow = true;
+  discs.receiveShadow = true;
+  poles.castShadow = true;
+  poles.receiveShadow = true;
 
   // Tagged so Task 6's underground-transparency mode knows which station
   // groups contain a sub-surface platform (dim/hide) vs. which line owns them.

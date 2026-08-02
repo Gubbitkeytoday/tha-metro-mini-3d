@@ -61,12 +61,32 @@ export class NetworkLayer implements CustomLayerInterface {
       antialias: true,
     });
     this.renderer.autoClear = false;
+    // Off by default (§3A.5): a city-wide shadow map is the single most
+    // expensive thing in this scene and the 30-FPS mobile target has no room
+    // for it. The map is allocated once and enabled/disabled via
+    // renderer.shadowMap.enabled so toggling costs no reallocation.
+    this.renderer.shadowMap.enabled = false;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const scene = new THREE.Scene();
     const ambient = new THREE.AmbientLight(0xffffff, 1.6);
     scene.add(ambient);
     const sun = new THREE.DirectionalLight(0xffffff, 2.2);
     sun.position.set(-3000, -2000, 8000);
+    sun.castShadow = true;
+    // Tightly-fit orthographic frustum: a 4 km box around the origin covers
+    // the visible core at typical zooms. Wider would quantise the shadow map
+    // into uselessness; this is the "tightly-fit frustum" §3A.5 asks for.
+    const cam = sun.shadow.camera;
+    cam.left = -2000;
+    cam.right = 2000;
+    cam.top = 2000;
+    cam.bottom = -2000;
+    cam.near = 1;
+    cam.far = 30_000;
+    cam.updateProjectionMatrix();
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.bias = -0.0005;
     scene.add(sun);
     this.ambientLight = ambient;
     this.sunLight = sun;
@@ -168,6 +188,20 @@ export class NetworkLayer implements CustomLayerInterface {
     if (on === this.undergroundMode) return;
     this.undergroundMode = on;
     this.applyUndergroundMode();
+  }
+
+  setShadowsEnabled(on: boolean): void {
+    if (!this.renderer) return;
+    this.renderer.shadowMap.enabled = on;
+    // Three caches compiled programs per material; flipping shadowMap.enabled
+    // requires a recompile or existing materials keep their old defines.
+    this.renderer.shadowMap.needsUpdate = true;
+    this.scene?.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof THREE.InstancedMesh) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => (m.needsUpdate = true));
+      }
+    });
   }
 
   /** Show/hide one line's track + stations. Vehicles are hidden separately by
