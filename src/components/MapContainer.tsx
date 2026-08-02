@@ -14,7 +14,7 @@ import { FollowCamera } from "../map/followCamera";
 import { pickAt } from "../map/selection";
 import { skyPalette, sunDirection } from "../map/sun";
 import {
-  basemapTheme,
+  NIGHT_THEME,
   mixColor,
   nightFactor,
   parseColor,
@@ -178,9 +178,19 @@ export function MapContainer() {
         const bucket = Math.round(t * 200);
         if (bucket === lastNightBucket) return;
         lastNightBucket = bucket;
-        const theme = basemapTheme(elevationDeg);
+        // Blend each layer's captured original directly to the fixed night
+        // target — `t` applied exactly once. (An earlier version blended
+        // through an elevation-dependent `basemapTheme(elevationDeg)`,
+        // which was itself already a day/night blend by `t`; composing the
+        // two applied `t` twice, pulling mid-transition colours toward a
+        // generic hardcoded reference that should never reach the map —
+        // see basemapTheme.ts's NIGHT_THEME doc comment.)
         for (const entry of themeable) {
-          map.setPaintProperty(entry.id, entry.prop, mixColor(entry.original, theme[entry.role], t));
+          map.setPaintProperty(
+            entry.id,
+            entry.prop,
+            mixColor(entry.original, NIGHT_THEME[entry.role], t),
+          );
         }
       };
 

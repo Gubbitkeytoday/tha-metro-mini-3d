@@ -44,19 +44,22 @@ interface RgbColor {
   b: number;
 }
 
-const DAY: Record<keyof BasemapTheme, RgbColor> = {
-  background: { r: 0xf8, g: 0xf4, b: 0xf0 },
-  water: { r: 0xaa, g: 0xd3, b: 0xdf },
-  land: { r: 0xf2, g: 0xef, b: 0xe9 },
-  building: { r: 0xd9, g: 0xd0, b: 0xc9 },
-  road: { r: 0xff, g: 0xff, b: 0xff },
-  labelText: { r: 0x33, g: 0x33, b: 0x33 },
-  labelHalo: { r: 0xff, g: 0xff, b: 0xff },
-};
-
 // Deliberately not pitch black — same "still legible at 03:00" position
 // `skyPalette` takes (`skyPalette(-40).ambientIntensity > 0.2`). Night is a
 // deep, cool, uniform wash; label text stays light so it still reads.
+//
+// There is deliberately no "DAY" counterpart here. An earlier version of
+// this module also held a generic hardcoded day reference and exposed
+// `basemapTheme(elevationDeg)`, which blended DAY->NIGHT by the night
+// factor and expected callers to blend a layer's *real* captured original
+// colour toward *that* by the same factor again — applying the night
+// factor twice (correct only at the t=0 and t=1 endpoints; everywhere else
+// pulled toward the generic DAY colour, which was never supposed to reach
+// the map at all). The real "day" colour for any given layer is simply
+// that layer's own original paint value, which only `MapContainer.tsx`
+// has (captured once at `style.load`) — this module has no business
+// approximating it. Callers blend a layer's original directly toward the
+// fixed `NIGHT_THEME` below with `mixColor`, applying `t` exactly once.
 const NIGHT: Record<keyof BasemapTheme, RgbColor> = {
   background: { r: 0x0a, g: 0x12, b: 0x20 },
   water: { r: 0x0d, g: 0x2b, b: 0x4a },
@@ -74,29 +77,20 @@ const toHex = (c: RgbColor): string => {
   return `#${ch(c.r)}${ch(c.g)}${ch(c.b)}`;
 };
 
-const mixRgb = (a: RgbColor, b: RgbColor, t: number): RgbColor => ({
-  r: lerp(a.r, b.r, t),
-  g: lerp(a.g, b.g, t),
-  b: lerp(a.b, b.b, t),
-});
-
 /**
- * The basemap's target colour palette for a given solar elevation — a
- * self-contained blend between a generic day reference and a generic night
- * reference per role. Callers with a real layer's own original colour (as
- * `MapContainer.tsx` has, captured once at `style.load`) should blend
- * *that* toward this theme's value with `mixColor`, not use this palette
- * verbatim, so daytime stays pixel-identical to the untouched style.
+ * The fixed night-time target colour per role. Callers blend a layer's own
+ * *original* colour (captured once, before any theming has run) toward
+ * these values by `nightFactor(elevationDeg)` using `mixColor` — that is
+ * the only blend step; there is no intermediate day palette to blend
+ * through.
  */
-export function basemapTheme(elevationDeg: number): BasemapTheme {
-  const t = nightFactor(elevationDeg);
-  const roles = Object.keys(DAY) as (keyof BasemapTheme)[];
-  const theme = {} as BasemapTheme;
-  for (const role of roles) {
-    theme[role] = toHex(mixRgb(DAY[role], NIGHT[role], t));
-  }
-  return theme;
-}
+export const NIGHT_THEME: BasemapTheme = (Object.keys(NIGHT) as (keyof BasemapTheme)[]).reduce(
+  (acc, role) => {
+    acc[role] = toHex(NIGHT[role]);
+    return acc;
+  },
+  {} as BasemapTheme,
+);
 
 interface RgbaColor extends RgbColor {
   a: number;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { basemapTheme, mixColor, nightFactor, parseColor } from "./basemapTheme";
+import { NIGHT_THEME, mixColor, nightFactor, parseColor } from "./basemapTheme";
 
 /** Relative luminance (simple perceptual weighting) from a "#rrggbb" string. */
 function luminance(hex: string): number {
@@ -43,35 +43,30 @@ describe("nightFactor", () => {
   });
 });
 
-describe("basemapTheme", () => {
-  it("returns a different background at night than at midday", () => {
-    expect(basemapTheme(-20).background).not.toBe(basemapTheme(60).background);
-  });
-
-  it("is genuinely darker at night, not merely a different string", () => {
-    const night = basemapTheme(-20);
-    const day = basemapTheme(60);
-    expect(luminance(night.background)).toBeLessThan(luminance(day.background));
-    expect(luminance(night.water)).toBeLessThan(luminance(day.water));
-    expect(luminance(night.land)).toBeLessThan(luminance(day.land));
-    expect(luminance(night.building)).toBeLessThan(luminance(day.building));
-    expect(luminance(night.road)).toBeLessThan(luminance(day.road));
-  });
-
-  it("stays legible at deep night — label text is not pitch black", () => {
-    const night = basemapTheme(-40);
-    expect(luminance(night.labelText)).toBeGreaterThan(80);
-  });
-
+// `basemapTheme(elevationDeg)` (an elevation-dependent DAY->NIGHT blend) was
+// removed as part of the Task 10b review fix — see the doc comment on
+// `NIGHT_THEME` in basemapTheme.ts for why keeping it around was itself the
+// bug. `NIGHT_THEME` is a fixed constant now; the elevation dependence lives
+// entirely in `nightFactor`, and the only blend is
+// `mixColor(original, NIGHT_THEME[role], nightFactor(elevationDeg))` in
+// MapContainer.tsx (covered by the regression test below).
+describe("NIGHT_THEME", () => {
   it("every colour is a valid #rrggbb string MapLibre will accept", () => {
-    const theme = basemapTheme(-15);
-    for (const value of Object.values(theme)) {
+    for (const value of Object.values(NIGHT_THEME)) {
       expect(value).toMatch(HEX_RE);
     }
   });
 
-  it("is deterministic", () => {
-    expect(basemapTheme(-10)).toEqual(basemapTheme(-10));
+  it("stays legible — label text is not pitch black", () => {
+    expect(luminance(NIGHT_THEME.labelText)).toBeGreaterThan(80);
+  });
+
+  it("reads as dark for every backdrop role", () => {
+    // Absolute brightness ceilings a "night" colour should sit under, not a
+    // comparison against a day palette — this module doesn't keep one.
+    for (const role of ["background", "water", "land", "building", "road"] as const) {
+      expect(luminance(NIGHT_THEME[role])).toBeLessThan(120);
+    }
   });
 });
 
@@ -103,6 +98,48 @@ describe("parseColor", () => {
   it("returns null for anything it does not recognise", () => {
     expect(parseColor("papayawhip")).toBeNull();
     expect(parseColor("not-a-colour")).toBeNull();
+  });
+});
+
+// Regression test for the double-application bug (Task 10b review finding).
+// Before the fix, MapContainer.tsx composed
+// `mixColor(original, basemapTheme(elevationDeg)[role], t)`, where
+// `basemapTheme(elevationDeg)` was *itself* already a DAY->NIGHT blend by
+// `t`. Composing the two applied `t` twice:
+//   final(t) = (1-t)*original + t(1-t)*DAY[role] + t^2*NIGHT[role]
+// which only agreed with a direct blend at t=0 and t=1 — at t=0.5 it was
+// pulled toward a hardcoded generic DAY[role] reference that should never
+// reach the map. (This is provable directly against the old code: with
+// original="#3355ff", elevationDeg=-2.5 (t=0.5), the old composition
+// produced "#486aca" versus "#2040a5" for a direct blend — the RED result
+// recorded in the task-10b-report.md fix entry.)
+//
+// The fix deleted that intermediate day palette entirely — see the doc
+// comment on `NIGHT_THEME` in basemapTheme.ts. The only blend that exists
+// now is `mixColor(original, NIGHT_THEME[role], t)`, applying `t` exactly
+// once. This test pins that shape: the result must equal an independently
+// (not via mixColor again) computed direct blend from `original` to
+// `NIGHT_THEME[role]`, for an `original` deliberately far from any
+// plausible day-ish colour — the exact case that distinguished single from
+// double application above.
+describe("night theming composition (regression: t must be applied exactly once)", () => {
+  it("blends directly from the original to the fixed NIGHT_THEME colour, with no intermediate day-reference step", () => {
+    const original = "#3355ff";
+    const t = 0.5;
+
+    const applied = mixColor(original, NIGHT_THEME.water, t);
+
+    // Independently computed component-by-component, not by calling
+    // mixColor again, so this doesn't just restate the implementation
+    // under test.
+    const orig = parseColor(original)!;
+    const night = parseColor(NIGHT_THEME.water)!;
+    const direct = `#${[orig.r, orig.g, orig.b]
+      .map((c, i) => Math.round(c + ([night.r, night.g, night.b][i] - c) * t))
+      .map((v) => v.toString(16).padStart(2, "0"))
+      .join("")}`;
+
+    expect(applied).toBe(direct);
   });
 });
 
