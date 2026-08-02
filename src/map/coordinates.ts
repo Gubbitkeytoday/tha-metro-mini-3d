@@ -39,6 +39,65 @@ export function lngLatAltToLocal([lng, lat, alt]: LngLatAlt): [number, number, n
 }
 
 /**
+ * MapLibre's default vertical field of view, in radians (36.87°). Used to turn
+ * "how tall is the viewport" into "how far back is the camera".
+ */
+const MAPLIBRE_FOV = 0.6435011087932844;
+
+/** MapLibre's tile size in CSS pixels — one world is 512 * 2^zoom px across. */
+const TILE_SIZE_PX = 512;
+
+/** Equatorial circumference, matching MapLibre's mercator scale. */
+const EARTH_CIRCUMFERENCE_M = 40075016.686;
+
+/**
+ * Where the viewer actually is, in the local ENU meter frame.
+ *
+ * `ThreeLayer`'s camera is a bare matrix holder — the floating-origin scheme
+ * folds MapLibre's mercator→clip matrix into `projectionMatrix` and leaves the
+ * camera's world transform as the identity — so `camera.position` is the
+ * origin, not the viewer. Anything that has to know where the viewer is
+ * (billboarding a label, fading it by distance) has to reconstruct it.
+ *
+ * Derived from public map state only. MapLibre v6 removed
+ * `getFreeCameraOptions()`, and `map.transform.cameraPosition` is marked
+ * `@internal`, so depending on either would be building on sand; this is the
+ * same camera model, computed from `center`/`zoom`/`pitch`/`bearing`.
+ */
+export function cameraLocalPosition(view: {
+  center: { lng: number; lat: number };
+  zoom: number;
+  pitchDeg: number;
+  bearingDeg: number;
+  /** Viewport height in CSS pixels. */
+  heightPx: number;
+}): [number, number, number] {
+  const { center, zoom, pitchDeg, bearingDeg, heightPx } = view;
+
+  // Distance from the camera to the point it is centred on, in pixels, then
+  // in metres at this latitude and zoom.
+  const cameraToCenterPx = (0.5 / Math.tan(MAPLIBRE_FOV / 2)) * heightPx;
+  const metresPerPixel =
+    (EARTH_CIRCUMFERENCE_M * Math.cos((center.lat * Math.PI) / 180)) /
+    (TILE_SIZE_PX * Math.pow(2, zoom));
+  const distanceM = cameraToCenterPx * metresPerPixel;
+
+  const pitch = (pitchDeg * Math.PI) / 180;
+  const bearing = (bearingDeg * Math.PI) / 180;
+
+  // Pitch 0 is straight down, so the camera is directly overhead; pitching
+  // swings it back along the bearing it is looking *from*, hence the minus.
+  const groundOffsetM = distanceM * Math.sin(pitch);
+  const [cx, cy] = lngLatAltToLocal([center.lng, center.lat, 0]);
+
+  return [
+    cx - groundOffsetM * Math.sin(bearing),
+    cy - groundOffsetM * Math.cos(bearing),
+    distanceM * Math.cos(pitch),
+  ];
+}
+
+/**
  * Inverse of {@link lngLatAltToLocal} — local ENU meters back to [lng, lat].
  * Needed to hand engine-frame positions (vehicles, stations) to MapLibre APIs
  * that speak LngLat: `map.project()` for click hit-testing and `jumpTo()` for

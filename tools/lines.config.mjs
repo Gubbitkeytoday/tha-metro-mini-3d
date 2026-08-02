@@ -144,6 +144,32 @@ export const LINES = [
     gtfsRouteId: "2027",
     osm: { relationId: 13178788, match: /light red|red line.*taling chan/i },
   },
+  {
+    key: "blue",
+    name: "MRT Blue Line",
+    nameTh: "สายเฉลิมรัชมงคล",
+    // Feed route_color (1964B7) matches the conventional MRT Blue livery.
+    color: "#1964B7",
+    // Nominal only — the Blue Line is the first genuinely mixed-structure line
+    // in the registry (underground Hua Lamphong–Tha Phra and Bang Sue–Hua
+    // Lamphong, elevated Tao Poon–Tha Phra and Tha Phra–Lak Song). MVP 6
+    // derives the real per-point altitude from each OSM way's tunnel/bridge
+    // tags (see deriveStructure() in tools/track-structure.mjs); `structure`
+    // stays as the fallback for ways carrying neither tag and as the line's
+    // one-word label in the UI. Underground is the right fallback here
+    // because the untagged remainder of this relation is bored tunnel.
+    structure: "underground",
+    vehicleType: "heavy",
+    gtfsRouteId: "3",
+    // Relation 444659 is named "(Tha Phra → Lak Song)" but covers the WHOLE
+    // line, not just the 4-station western extension: the Blue Line's service
+    // pattern is a loop, so this direction runs Tha Phra → the full circle via
+    // Bang Sue and Hua Lamphong → Tha Phra → Lak Song. Verified live
+    // (2026-08-02): 11 ways / 505 points / 39 stop nodes spanning
+    // lat 13.711–13.814, lon 100.410–100.575 — the entire network footprint,
+    // not a 4-station stub. Its directional pair is 7725025.
+    osm: { relationId: 444659, match: /MRT-BL|blue line/i },
+  },
 ];
 
 /**

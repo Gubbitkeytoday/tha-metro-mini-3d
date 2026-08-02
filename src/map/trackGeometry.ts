@@ -26,10 +26,15 @@ export const DECK_PROFILE: Record<Structure | "monorail", { widthM: number; dept
   monorail: { widthM: 5, depthM: 1.6 },
 };
 
-/** Monorail/APM guideways are beams, not viaducts, whatever their altitude. */
-function profileFor(line: LineGeometry) {
+/**
+ * Monorail/APM guideways are beams, not viaducts, whatever their altitude.
+ * `structure` is the *segment's* structure, not the line's nominal one — a
+ * mixed line (MRT Blue) gets the tunnel profile through the core and the
+ * viaduct profile on its outer arms.
+ */
+function profileFor(line: LineGeometry, structure: Structure) {
   const beam = line.vehicleType === "monorail" || line.vehicleType === "apm";
-  return beam ? DECK_PROFILE.monorail : DECK_PROFILE[line.structure];
+  return beam ? DECK_PROFILE.monorail : DECK_PROFILE[structure];
 }
 
 /** Resample interval along the smoothed curve. */
@@ -42,17 +47,61 @@ function toLocalVec3(points: LineGeometry["track"]): THREE.Vector3[] {
 }
 
 /**
- * Sweep a rectangular viaduct-deck profile along the smoothed track curve.
- * Produces one indexed BufferGeometry (top, bottom and both side faces).
+ * Split a line's track into maximal runs of one structure (MVP 6).
+ *
+ * Adjacent runs SHARE their boundary index deliberately: each run is swept as
+ * its own curve, so without the shared point the tunnel deck and the viaduct
+ * deck would stop and start a full sample apart and leave a visible gap at
+ * every portal.
+ *
+ * A line whose `trackStructures` is missing or the wrong length (data written
+ * before MVP 6) degrades to a single run of the line's nominal structure
+ * rather than throwing — the pre-MVP-6 behaviour exactly.
  */
-export function buildTrackDeck(line: LineGeometry): THREE.Mesh {
-  const controlPoints = toLocalVec3(line.track);
+export function structureRuns(line: LineGeometry): { structure: Structure; from: number; to: number }[] {
+  const n = line.track.length;
+  if (n < 2) return [];
+  const structures = line.trackStructures;
+  if (!structures || structures.length !== n) {
+    return [{ structure: line.structure, from: 0, to: n - 1 }];
+  }
+  const runs: { structure: Structure; from: number; to: number }[] = [];
+  let from = 0;
+  for (let i = 1; i < n; i++) {
+    if (structures[i] === structures[from]) continue;
+    runs.push({ structure: structures[from], from, to: i });
+    from = i;
+  }
+  runs.push({ structure: structures[from], from, to: n - 1 });
+  // A one-point run cannot be swept into a deck; fold it into its neighbour.
+  return runs.filter((r) => r.to > r.from);
+}
+
+/**
+ * Sweep a rectangular viaduct-deck profile along the smoothed track curve.
+ * Produces one indexed BufferGeometry (top, bottom and both side faces) per
+ * structure run, so a mixed line's tunnel and viaduct sections are separate
+ * meshes the underground-transparency mode can style independently.
+ */
+export function buildTrackDecks(line: LineGeometry): { mesh: THREE.Mesh; structure: Structure }[] {
+  return structureRuns(line).map((run) => ({
+    structure: run.structure,
+    mesh: buildDeckSegment(line, line.track.slice(run.from, run.to + 1), run.structure),
+  }));
+}
+
+function buildDeckSegment(
+  line: LineGeometry,
+  points: LineGeometry["track"],
+  structure: Structure,
+): THREE.Mesh {
+  const controlPoints = toLocalVec3(points);
   const curve = new THREE.CatmullRomCurve3(controlPoints, false, "centripetal");
   const length = curve.getLength();
   const samples = Math.max(controlPoints.length, Math.round(length / SAMPLE_SPACING_M));
 
   const centers = curve.getSpacedPoints(samples);
-  const { widthM, depthM } = profileFor(line);
+  const { widthM, depthM } = profileFor(line, structure);
   const halfW = widthM / 2;
 
   // 4 profile corners per sample: topLeft, topRight, bottomRight, bottomLeft
@@ -99,7 +148,7 @@ export function buildTrackDeck(line: LineGeometry): THREE.Mesh {
     side: THREE.DoubleSide,
   });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.name = `track-${line.key}`;
+  mesh.name = `track-${line.key}-${structure}`;
   return mesh;
 }
 
@@ -162,8 +211,12 @@ export function buildStationMarkers(lines: LineGeometry[]): THREE.Object3D {
     m.makeTranslation(x, y, z + 1.5);
     discs.setMatrixAt(i, m);
     discs.setColorAt(i, stations[i].color);
-    // unit-height pole scaled to reach from ground to deck
-    m.makeScale(1, 1, z).setPosition(x, y, z / 2);
+    // Unit-height pole scaled to reach between ground level and the platform,
+    // in either direction: for an underground station z is negative, and
+    // scaling by a negative z would mirror the geometry (inverting its
+    // normals, so Lambert shades the shaft black). Take the magnitude and let
+    // the midpoint position handle which side of the ground plane it sits on.
+    m.makeScale(1, 1, Math.abs(z)).setPosition(x, y, z / 2);
     poles.setMatrixAt(i, m);
   }
   discs.instanceMatrix.needsUpdate = true;

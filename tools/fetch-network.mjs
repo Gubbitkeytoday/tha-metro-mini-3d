@@ -15,10 +15,15 @@
  * silently changes when OSM does.
  */
 
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertRegistryValid, INTERCHANGE_OVERRIDES, LINES, STRUCTURE_ALTITUDE_M } from "./lines.config.mjs";
+import {
+  densifyAroundTransitions,
+  deriveStructure,
+  smoothAltitudes,
+} from "./track-structure.mjs";
 
 const OUT_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../src/data/network.json");
 
@@ -73,7 +78,10 @@ async function overpass(query) {
 
 /** Greedily stitch unordered way segments into one continuous polyline. */
 function stitchWays(ways) {
-  const segments = ways.map((w) => w.geometry.map((p) => [p.lon, p.lat]));
+  // Each point carries its way's structure as a third element so the
+  // per-segment classification survives stitching (segments get reversed and
+  // spliced in arbitrary order, so a parallel per-way array would not).
+  const segments = ways.map((w) => w.geometry.map((p) => [p.lon, p.lat, w.structure]));
   if (segments.length === 0) return [];
   const path = segments.shift();
   const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-4; // ~10 m
@@ -111,7 +119,7 @@ function dedupe(coords) {
   );
 }
 
-async function fetchBranch(relationId, branchKey, altitudeM) {
+async function fetchBranch(relationId, branchKey, nominalStructure) {
   const data = await overpass(`[out:json][timeout:90];relation(${relationId});out geom;`);
   const rel = data.elements.find((e) => e.type === "relation");
   if (!rel) throw new Error(`Relation ${relationId} not found`);
@@ -119,7 +127,24 @@ async function fetchBranch(relationId, branchKey, altitudeM) {
   const trackWays = rel.members.filter(
     (m) => m.type === "way" && m.role === "" && m.geometry,
   );
-  const path = dedupe(stitchWays(trackWays));
+
+  // Member ways come back from `out geom` with geometry but WITHOUT tags (the
+  // same omission the station-node code below already works around), so
+  // tunnel/bridge have to be fetched in a follow-up query before the
+  // per-segment structure can be derived.
+  const wayIds = trackWays.map((w) => w.ref).join(",");
+  let tagsById = new Map();
+  if (wayIds.length > 0) {
+    const wayData = await overpass(`[out:json][timeout:90];way(id:${wayIds});out tags;`);
+    tagsById = new Map(wayData.elements.map((e) => [String(e.id), e.tags ?? {}]));
+  }
+  for (const w of trackWays) {
+    w.structure = deriveStructure(tagsById.get(String(w.ref)), nominalStructure);
+  }
+
+  // Densify before the altitudes are assigned so the ramp has vertices to be
+  // drawn on — OSM route geometry is far too sparse at portals otherwise.
+  const path = densifyAroundTransitions(dedupe(stitchWays(trackWays)));
 
   // Candidate stop/platform node members: PTv2 route relations mark these
   // either with an explicit role starting "stop"/"platform", OR with an
@@ -163,23 +188,65 @@ async function fetchBranch(relationId, branchKey, altitudeM) {
     s.name = tags["name:en"] ?? tags.name ?? "";
     s.nameTh = tags["name:th"] ?? tags.name ?? "";
     s.code = tags.ref ?? "";
+    // Every localised name OSM carries for this stop, keyed by BCP-47-ish
+    // language subtag. Coverage is real but uneven — surveyed live on
+    // 2026-08-02 across all ten relations: en 194/195, th 153, zh 27, ja 18,
+    // ko 4, fr 4, ru 2, de 1 — which is exactly why the UI offers the
+    // languages the DATA has rather than a list of languages it doesn't.
+    s.names = {};
+    for (const [key, value] of Object.entries(tags)) {
+      if (!key.startsWith("name:") || typeof value !== "string" || !value) continue;
+      const lang = key.slice(5);
+      // Skip OSM's non-language name variants (name:left, name:prefix, ...)
+      // and script/etymology qualifiers, which are not translations.
+      if (!/^[a-z]{2,3}(-[A-Za-z0-9]+)*$/.test(lang)) continue;
+      s.names[lang] = value;
+    }
   }
 
+  // [lon, lat, altitude_m] per SRS §F1.3, altitude now per point rather than
+  // per line — see deriveStructure().
+  const track = smoothAltitudes(
+    path.map(([lon, lat, structure]) => [lon, lat, STRUCTURE_ALTITUDE_M[structure]]),
+  );
+  const trackStructures = path.map(([, , structure]) => structure);
+
+  // A station sits at its track's altitude, not the line's nominal one: on a
+  // mixed line an underground platform rendered at +15 m would float above the
+  // tunnel it serves (and its support pole would be drawn upside down). Snap
+  // to the nearest track point — the same point the Rust preprocessor snaps
+  // the GTFS stop to, so the marker and the train agree.
+  const stationAltitude = (lon, lat) => {
+    let best = STRUCTURE_ALTITUDE_M[nominalStructure];
+    let bestD2 = Infinity;
+    for (const [tLon, tLat, alt] of track) {
+      const d2 = (tLon - lon) ** 2 + (tLat - lat) ** 2;
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = alt;
+      }
+    }
+    return best;
+  };
+
+  const mix = trackStructures.reduce((acc, s) => ((acc[s] = (acc[s] ?? 0) + 1), acc), {});
   console.log(
     `${branchKey}: relation ${relationId} "${rel.tags?.name ?? ""}" — ` +
-      `${trackWays.length} ways -> ${path.length} points, ${stations.length} stops`,
+      `${trackWays.length} ways -> ${path.length} points, ${stations.length} stops, ` +
+      `structure ${JSON.stringify(mix)}`,
   );
   return {
     relationId,
     osmName: rel.tags?.name ?? "",
-    // [lon, lat, altitude_m] per SRS §F1.3
-    track: path.map(([lon, lat]) => [lon, lat, altitudeM]),
+    track,
+    trackStructures,
     stations: stations.map((s) => ({
       id: s.id,
       name: s.name ?? "",
       nameTh: s.nameTh ?? "",
+      names: s.names ?? {},
       code: s.code ?? "",
-      position: [s.lon, s.lat, altitudeM],
+      position: [s.lon, s.lat, stationAltitude(s.lon, s.lat)],
     })),
   };
 }
@@ -211,12 +278,40 @@ async function main() {
   const selected = only.length > 0 ? LINES.filter((l) => only.includes(l.key)) : LINES;
   if (selected.length === 0) throw new Error(`no registry line matches ${only.join(", ")}`);
 
+  // A subset run refreshes only the named lines but must still write a file
+  // covering the WHOLE registry in registry order: `lines[i]` index is the
+  // load-bearing route_idx shared with the Rust cache and the vehicle buffer,
+  // so emitting just the fetched subset would silently renumber every route
+  // (and orphan the committed .tmb). Unfetched lines are carried over from the
+  // existing file; a subset run that names a line the current file has never
+  // seen is a hard error rather than a hole in the array.
+  const previous = new Map();
+  if (selected.length !== LINES.length) {
+    try {
+      const prior = JSON.parse(await readFile(OUT_PATH, "utf8"));
+      for (const l of prior.lines ?? []) previous.set(l.key, l);
+    } catch {
+      throw new Error(
+        `subset fetch needs an existing ${OUT_PATH} to merge into — run without arguments first`,
+      );
+    }
+  }
+
   const lines = [];
   for (const line of LINES) {
-    if (!selected.includes(line)) continue;
+    if (!selected.includes(line)) {
+      const carried = previous.get(line.key);
+      if (!carried) {
+        throw new Error(
+          `${line.key} is in the registry but not in the existing network.json — ` +
+            `run without arguments to fetch every line`,
+        );
+      }
+      lines.push(carried);
+      continue;
+    }
     const relationId = line.osm.relationId ?? (await discoverRelationId(line));
-    const alt = STRUCTURE_ALTITUDE_M[line.structure];
-    const geom = await fetchBranch(relationId, line.key, alt);
+    const geom = await fetchBranch(relationId, line.key, line.structure);
     lines.push({
       key: line.key,
       name: line.name,
@@ -242,7 +337,16 @@ async function main() {
   console.log(`Wrote ${OUT_PATH} (${lines.length} lines)`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only fetch when run as a CLI. The pure helpers above (deriveStructure,
+// smoothAltitudes) are unit-tested by tools/fetch-network.test.mjs, and an
+// unguarded main() would fire a full Overpass run on import.
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

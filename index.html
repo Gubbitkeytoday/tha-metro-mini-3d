@@ -2,15 +2,226 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover lets the map paint into a notched phone's inset
+         areas; the UI keeps clear of them via env(safe-area-inset-*) in
+         index.css. maximum-scale is deliberately NOT pinned — pinch-zooming
+         the page is an accessibility affordance, and the map has its own
+         gesture handling on the canvas anyway. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Bangkok Metro 3D" />
+
+    <!-- ================================================================
+         Discoverability.
+
+         This is a single-page WebGL app: without the block below, a crawler
+         or a chat/social unfurler sees an empty <div> and a <canvas>, and the
+         page is effectively invisible to search. Everything here describes
+         what the page actually contains, in the two languages its audience
+         reads, and the <noscript>/prerender block in <body> gives non-JS
+         crawlers real text to index.
+
+         Keep the claims accurate. Marking up features the app does not have
+         is the fastest way to lose rich results entirely.
+         ================================================================ -->
+    <title>Bangkok Metro 3D — live BTS, MRT, SRT & Airport Rail Link map | รถไฟฟ้ากรุงเทพ 3 มิติ</title>
+    <meta
+      name="description"
+      content="Watch every BTS, MRT, SRT and Airport Rail Link train move across Greater Bangkok in 3D, on real track and real timetables. 10 lines, 193 stations. Scrub to any time of day, follow a train, see the underground. Free, no account, no ads."
+    />
+    <link rel="canonical" href="https://metro.itstom.me/" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <meta name="author" content="tha-metro-mini-3d contributors" />
+    <meta
+      name="keywords"
+      content="Bangkok metro map, BTS map, MRT map, Bangkok train map 3D, Airport Rail Link, SRT Red Line, รถไฟฟ้ากรุงเทพ, แผนที่รถไฟฟ้า, BTS สายสุขุมวิท, MRT สายสีน้ำเงิน"
+    />
+
+    <!-- Every language the app ships, as a crawlable URL. `?lang=` is read at
+         startup, so these are real destinations, not decoration. -->
+    <link rel="alternate" hreflang="en" href="https://metro.itstom.me/?lang=en" />
+    <link rel="alternate" hreflang="th" href="https://metro.itstom.me/?lang=th" />
+    <link rel="alternate" hreflang="zh" href="https://metro.itstom.me/?lang=zh" />
+    <link rel="alternate" hreflang="ja" href="https://metro.itstom.me/?lang=ja" />
+    <link rel="alternate" hreflang="ko" href="https://metro.itstom.me/?lang=ko" />
+    <link rel="alternate" hreflang="fr" href="https://metro.itstom.me/?lang=fr" />
+    <link rel="alternate" hreflang="de" href="https://metro.itstom.me/?lang=de" />
+    <link rel="alternate" hreflang="ru" href="https://metro.itstom.me/?lang=ru" />
+    <link rel="alternate" hreflang="es" href="https://metro.itstom.me/?lang=es" />
+    <link rel="alternate" hreflang="x-default" href="https://metro.itstom.me/" />
+
+    <!-- Open Graph: what Facebook, LINE, Discord, Slack and Messenger show. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Bangkok Metro 3D" />
+    <meta property="og:url" content="https://metro.itstom.me/" />
+    <meta property="og:title" content="Bangkok Metro 3D — every train, on schedule, in 3D" />
+    <meta
+      property="og:description"
+      content="Greater Bangkok's rail network in 3D: 10 lines, 193 stations, 8,193 daily runs, animated from published timetables. Scrub to any time, follow a train, look underground."
+    />
+    <meta property="og:image" content="https://metro.itstom.me/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="A 3D view of Bangkok with coloured metro lines and floating station names above the city."
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="th_TH" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Bangkok Metro 3D — every train, on schedule, in 3D" />
+    <meta
+      name="twitter:description"
+      content="Greater Bangkok's rail network in 3D: 10 lines, 193 stations, animated from published timetables."
+    />
+    <meta name="twitter:image" content="https://metro.itstom.me/og-image.png" />
+
+    <link rel="manifest" href="/site.webmanifest" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%88%3C/text%3E%3C/svg%3E"
     />
-    <title>Greater Bangkok Metro Mini 3D</title>
+
+    <!-- Warm up the two third-party origins the first paint depends on. -->
+    <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
+    <link rel="dns-prefetch" href="https://tiles.openfreemap.org" />
+
+    <!-- Structured data. WebApplication is the accurate type: this is a tool
+         you use in the browser, not an article. The Dataset node credits the
+         two open datasets the whole thing is built on, which is both correct
+         attribution and a real discovery surface for dataset search. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "@id": "https://metro.itstom.me/#app",
+            "name": "Bangkok Metro 3D",
+            "alternateName": "รถไฟฟ้ากรุงเทพ 3 มิติ",
+            "url": "https://metro.itstom.me/",
+            "applicationCategory": "TravelApplication",
+            "operatingSystem": "Any modern web browser with WebGL 2.0",
+            "browserRequirements": "Requires WebGL 2.0 and WebAssembly",
+            "inLanguage": ["en", "th", "zh", "ja", "ko", "fr", "de", "ru", "es"],
+            "isAccessibleForFree": true,
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "THB" },
+            "description": "An interactive 3D map of the Greater Bangkok rail network — BTS Sukhumvit and Silom, MRT Blue and Purple, MRT Pink and Yellow, BTS Gold, SRT Dark and Light Red, and the Airport Rail Link — with trains animated along real track geometry from published static GTFS timetables.",
+            "featureList": [
+              "3D track with real elevated, at-grade and underground alignments",
+              "Trains positioned from published timetables, at any time of day",
+              "Time scrubbing and 1x to 60x time warp",
+              "Per-train inspector with live next-stop countdown and full schedule",
+              "Live station departure boards",
+              "Floating 3D station names in nine languages",
+              "See-through tunnels for underground track",
+              "Clock-driven day and night lighting",
+              "GPS positioning on the map"
+            ],
+            "screenshot": "https://metro.itstom.me/og-image.png",
+            "license": "https://opensource.org/licenses/MIT",
+            "sameAs": ["https://github.com/naiiytom/tha-metro-mini-3d"]
+          },
+          {
+            "@type": "Dataset",
+            "@id": "https://metro.itstom.me/#data",
+            "name": "Greater Bangkok rail network geometry and timetables",
+            "description": "Track geometry and multilingual station names from OpenStreetMap route relations, combined with the Namtang / OTP open-data GTFS feed for schedules, preprocessed into a compact binary timetable cache.",
+            "spatialCoverage": {
+              "@type": "Place",
+              "name": "Greater Bangkok, Thailand",
+              "geo": {
+                "@type": "GeoCoordinates",
+                "latitude": 13.7456,
+                "longitude": 100.5332
+              }
+            },
+            "license": "https://opendatacommons.org/licenses/odbl/1-0/",
+            "isBasedOn": [
+              "https://www.openstreetmap.org/",
+              "https://namtang-api.otp.go.th/opendata"
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://metro.itstom.me/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is this the real-time position of Bangkok trains?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. It is a schedule simulation: trains are placed by interpolating published static GTFS timetables, so it shows where a train should be at a given moment rather than where a specific train is. That is also why you can scrub to any past or future time of day."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which Bangkok lines are included?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Ten lines: BTS Sukhumvit, BTS Silom, BTS Gold, MRT Blue, MRT Purple, MRT Pink, MRT Yellow, SRT Dark Red, SRT Light Red and the Airport Rail Link — 193 stations in total. MRT Orange is not included because it is not yet in revenue service and has no mapped route to draw."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does it cost anything or need an account?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. It is free and open source, needs no account, shows no ads, and sets no cookies. Only your own view settings are stored, on your own device."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Real, indexable content. React replaces this on mount, but it is what
+         a non-JS crawler, a link unfurler and a slow first paint all get. It
+         is deliberately accurate rather than keyword soup. -->
+    <div id="root">
+      <main style="max-width: 46rem; margin: 0 auto; padding: 2rem 1.25rem; font-family: system-ui, sans-serif; line-height: 1.6; color: #0f172a">
+        <h1>Bangkok Metro 3D — รถไฟฟ้ากรุงเทพ 3 มิติ</h1>
+        <p>
+          An interactive 3D map of the Greater Bangkok rail network. Every train is placed
+          along real track geometry using published timetables, so you can watch the whole
+          network run, scrub to any time of day, and follow a single train from above.
+        </p>
+        <p>
+          แผนที่ 3 มิติของโครงข่ายรถไฟฟ้ากรุงเทพฯ และปริมณฑล ขบวนรถเคลื่อนที่ตามแนวรางจริงและตารางเดินรถจริง
+          เลื่อนดูเวลาใดก็ได้ ติดตามขบวนที่สนใจ และมองทะลุลงไปดูช่วงใต้ดินได้
+        </p>
+        <h2>Lines covered — สายที่ครอบคลุม</h2>
+        <ul>
+          <li>BTS Sukhumvit Line — บีทีเอส สายสุขุมวิท</li>
+          <li>BTS Silom Line — บีทีเอส สายสีลม</li>
+          <li>BTS Gold Line — บีทีเอส สายสีทอง</li>
+          <li>MRT Blue Line — เอ็มอาร์ที สายเฉลิมรัชมงคล (สายสีน้ำเงิน)</li>
+          <li>MRT Purple Line — เอ็มอาร์ที สายฉลองรัชธรรม (สายสีม่วง)</li>
+          <li>MRT Pink Line — เอ็มอาร์ที สายสีชมพู</li>
+          <li>MRT Yellow Line — เอ็มอาร์ที สายสีเหลือง</li>
+          <li>SRT Dark Red Line — รถไฟฟ้าชานเมือง สายสีแดงเข้ม</li>
+          <li>SRT Light Red Line — รถไฟฟ้าชานเมือง สายสีแดงอ่อน</li>
+          <li>Airport Rail Link — แอร์พอร์ต เรล ลิงก์</li>
+        </ul>
+        <p>
+          Ten lines, 193 stations, 8,193 scheduled runs a day. Schedule-driven, not a live
+          vehicle feed. Free, open source, no account, no ads, no cookies.
+        </p>
+        <noscript>
+          <p>
+            <strong>This map needs JavaScript and WebGL 2.0 to run.</strong> Please enable
+            JavaScript, or open the page in a current version of Chrome, Firefox, Safari or Edge.
+          </p>
+        </noscript>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -8,6 +8,9 @@ import type { Map as MapLibreMap } from "maplibre-gl";
  * | left-drag                                                 | pan (MapLibre's dragPan, untouched here — though `MapContainer.tsx` widens the map's click tolerance to 6px, which also raises dragPan's own click-vs-drag threshold) |
  * | wheel scroll                                              | zoom (MapLibre's scrollZoom, untouched) |
  * | middle-drag (press the wheel), right-drag, ctrl+left-drag | orbit — vertical pitches, horizontal turns, applied together |
+ * | one-finger drag                                           | pan (MapLibre's dragPan) |
+ * | pinch / two-finger twist                                  | zoom / turn (MapLibre's touchZoomRotate) |
+ * | two-finger vertical drag                                  | pitch (MapLibre's touchPitch) |
  *
  * MapLibre's built-in drag-rotate is replaced wholesale, for two reasons it
  * cannot do itself: it has no middle-button binding, and its rotation is
@@ -27,6 +30,18 @@ export function installCameraControls(map: MapLibreMap): () => void {
   // Owned entirely below; leaving it on would apply its own anchored rotation
   // on the same gesture, on top of this one.
   map.dragRotate.disable();
+
+  // Touch orbiting is NOT affected by the line above and must not be: on a
+  // phone or tablet there is no middle button, no right button and no ctrl
+  // key, so the mouse bindings below reach nothing and these two handlers are
+  // the only way to pitch or turn the camera. `dragRotate` is a separate
+  // handler from `touchZoomRotate` (pinch to zoom, twist to turn) and
+  // `touchPitch` (two-finger vertical drag), so disabling it leaves both
+  // intact. They are enabled by default; enabling them explicitly is a no-op
+  // that makes the dependency visible, so a future change to the mouse policy
+  // can't silently take rotation away from every touch device.
+  map.touchZoomRotate.enable();
+  map.touchPitch.enable();
 
   let pointerId: number | null = null;
   let lastX = 0;

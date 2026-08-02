@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One page, nine language entry points.
+
+  The app is a single URL whose language is chosen with `?lang=`, read at
+  startup. Listing those variants with xhtml:link alternates is what tells a
+  search engine they are the same page in different languages rather than
+  duplicate content — and it is what lets a Thai search surface the Thai
+  version directly.
+-->
+<urlset
+  xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+  xmlns:xhtml="http://www.w3.org/1999/xhtml"
+>
+  <url>
+    <loc>https://metro.itstom.me/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://metro.itstom.me/" />
+    <xhtml:link rel="alternate" hreflang="en" href="https://metro.itstom.me/?lang=en" />
+    <xhtml:link rel="alternate" hreflang="th" href="https://metro.itstom.me/?lang=th" />
+    <xhtml:link rel="alternate" hreflang="zh" href="https://metro.itstom.me/?lang=zh" />
+    <xhtml:link rel="alternate" hreflang="ja" href="https://metro.itstom.me/?lang=ja" />
+    <xhtml:link rel="alternate" hreflang="ko" href="https://metro.itstom.me/?lang=ko" />
+    <xhtml:link rel="alternate" hreflang="fr" href="https://metro.itstom.me/?lang=fr" />
+    <xhtml:link rel="alternate" hreflang="de" href="https://metro.itstom.me/?lang=de" />
+    <xhtml:link rel="alternate" hreflang="ru" href="https://metro.itstom.me/?lang=ru" />
+    <xhtml:link rel="alternate" hreflang="es" href="https://metro.itstom.me/?lang=es" />
+  </url>
+</urlset>

@@ -3,6 +3,10 @@ import type { RunDetail, StationInfo } from "../sim/protocol";
 import { activeSimClient } from "../sim/SimClient";
 import { formatCountdown, formatServiceSec } from "../sim/time";
 import { useAppStore } from "../stores/useAppStore";
+import { buildNameIndex, lineName, localiseEngineName } from "../i18n/languages";
+import { useLanguage, useStrings } from "../i18n/useStrings";
+import { GLASS_DIVIDER } from "./glass";
+import { OverlayPanel } from "./OverlayPanel";
 
 /** `${route_idx}:${station_idx}` — the natural key for cross-route station lookup. */
 function stationKey(routeIdx: number, stationIdx: number): string {
@@ -22,6 +26,8 @@ function stationKey(routeIdx: number, stationIdx: number): string {
 const POLL_MS = 1000;
 
 export function TrainInspector() {
+  const t = useStrings();
+  const language = useLanguage();
   const selectedRunIdx = useAppStore((s) => s.selectedRunIdx);
   const following = useAppStore((s) => s.following);
   const selectRun = useAppStore((s) => s.selectRun);
@@ -38,6 +44,12 @@ export function TrainInspector() {
     for (const s of stations) map.set(stationKey(s.route_idx, s.station_idx), s);
     return map;
   }, [stations]);
+
+  const nameIndex = useMemo(() => buildNameIndex(routes), [routes]);
+  /** Engine names arrive in English; show them in the chosen language.
+   *  Accepts null because `at_station`/`prev_station` are null off-route. */
+  const local = (name: string | null) =>
+    name === null ? "" : localiseEngineName(nameIndex, { name_en: name, name_th: "" }, language);
 
   useEffect(() => {
     if (selectedRunIdx === null) {
@@ -73,81 +85,64 @@ export function TrainInspector() {
   const color = detail ? `#${detail.color_rgb.toString(16).padStart(6, "0")}` : "#94a3b8";
 
   return (
-    <div className="pointer-events-auto absolute right-4 top-4 flex max-h-[calc(100dvh-2rem)] w-72 flex-col overflow-hidden rounded-xl bg-white/90 shadow-lg backdrop-blur">
-      <div className="flex items-start gap-2 border-b border-slate-200 px-4 py-3">
-        <span
-          className="mt-1 inline-block h-3 w-3 shrink-0 rounded-full"
-          style={{ background: color }}
-        />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-slate-900">
-            {detail ? detail.headsign : "Train"}
-          </p>
-          <p className="truncate text-xs text-slate-500">
-            {detail ? `${detail.route_name} · run ${detail.run_idx}` : `run ${selectedRunIdx}`}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => selectRun(null)}
-          aria-label="Close inspector"
-          className="rounded-md px-1.5 py-0.5 text-sm leading-none text-slate-400 hover:bg-slate-200 hover:text-slate-700"
-        >
-          ×
-        </button>
-      </div>
-
+    <OverlayPanel
+      title={detail ? local(detail.headsign) : t.train}
+      subtitle={detail ? `${detail.route_name} · run ${detail.run_idx}` : `run ${selectedRunIdx}`}
+      accent={color}
+      onClose={() => selectRun(null)}
+      closeLabel={t.closeInspector}
+    >
       {ended ? (
         <p className="px-4 py-3 text-xs text-slate-500">
-          This run has finished its journey. Pick another train.
+          {t.runFinished}
         </p>
       ) : !detail ? (
-        <p className="px-4 py-3 text-xs text-slate-500">Loading…</p>
+        <p className="px-4 py-3 text-xs text-slate-500">{t.loading}</p>
       ) : (
         <>
           <div className="space-y-2 px-4 py-3">
             <p className="text-xs text-slate-600">
-              {detail.origin} → {detail.destination}
+              {local(detail.origin)} → {local(detail.destination)}
             </p>
             <div className="rounded-lg bg-slate-100 px-3 py-2">
               {detail.state === 0 ? (
                 <p className="text-xs text-slate-700">
-                  Dwelling at{" "}
-                  <span className="font-semibold text-slate-900">{detail.at_station}</span>
+                  {t.dwellingAt}{" "}
+                  <span className="font-semibold text-slate-900">{local(detail.at_station)}</span>
                 </p>
               ) : (
                 <p className="text-xs text-slate-700">
-                  Departed{" "}
-                  <span className="font-medium text-slate-900">{detail.prev_station}</span>
+                  {t.departed}{" "}
+                  <span className="font-medium text-slate-900">{local(detail.prev_station)}</span>
                 </p>
               )}
               {detail.next_station !== null && detail.next_arrival_in_s !== null ? (
                 <p className="mt-1 text-xs text-slate-700">
-                  Next: <span className="font-semibold text-slate-900">{detail.next_station}</span>{" "}
+                  {t.next}: <span className="font-semibold text-slate-900">{local(detail.next_station)}</span>{" "}
                   in{" "}
                   <span className="font-mono tabular-nums">
                     {formatCountdown(detail.next_arrival_in_s)}
                   </span>
                 </p>
               ) : (
-                <p className="mt-1 text-xs text-slate-500">Terminus — end of run.</p>
+                <p className="mt-1 text-xs text-slate-500">{t.terminus}</p>
               )}
             </div>
             <button
               type="button"
               onClick={() => setFollowing(!following)}
-              className={`w-full rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+              className={`w-full rounded-md px-2 py-1.5 text-xs font-medium transition-colors pointer-coarse:min-h-11 ${
                 following
                   ? "bg-slate-900 text-white hover:bg-slate-700"
                   : "bg-slate-200/80 text-slate-700 hover:bg-slate-300"
               }`}
             >
-              {following ? "Following — click to release" : "Follow this train"}
+              {following ? t.following : t.followThisTrain}
             </button>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto border-t border-slate-200 px-4 py-2">
-            <p className="pb-1 text-[10px] uppercase tracking-wide text-slate-400">Schedule</p>
+          <div className={`min-h-0 flex-1 overflow-y-auto border-t px-4 py-2 ${GLASS_DIVIDER}`}>
+            <p className="pb-1 text-[10px] uppercase tracking-wide text-slate-400">{t.schedule}</p>
             <ol className="space-y-0.5">
               {detail.stops.map((stop, i) => {
                 const isNext = detail.next_stop_ordinal === i;
@@ -174,7 +169,7 @@ export function TrainInspector() {
                   >
                     <span className="min-w-0 flex-1 truncate">
                       {stop.code ? `${stop.code} · ` : ""}
-                      {stop.name_en}
+                      {local(stop.name_en)}
                       {stationInfo && stationInfo.interchanges.length > 0 && (
                         <span className="ml-1 inline-flex flex-wrap items-center gap-1">
                           {stationInfo.interchanges.map((ix) => (
@@ -183,7 +178,7 @@ export function TrainInspector() {
                               className="rounded-full px-1 py-0 text-[9px] font-medium text-white"
                               style={{ background: routes[ix.route_idx]?.color ?? "#64748b" }}
                             >
-                              {routes[ix.route_idx]?.name ?? `Route ${ix.route_idx}`}
+                              {routes[ix.route_idx] ? lineName(routes[ix.route_idx], language) : `Route ${ix.route_idx}`}
                             </span>
                           ))}
                         </span>
@@ -199,6 +194,6 @@ export function TrainInspector() {
           </div>
         </>
       )}
-    </div>
+    </OverlayPanel>
   );
 }

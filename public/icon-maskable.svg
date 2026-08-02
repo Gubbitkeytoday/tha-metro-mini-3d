@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Bangkok Metro 3D">
+  <!-- Maskable variant: the platform may crop this to a circle, so the artwork
+       is pulled into the inner 80% safe zone and the background bleeds to the
+       full square. Same marks as icon.svg, just scaled in. -->
+  <rect width="512" height="512" fill="#0f172a" />
+  <g transform="translate(256 256) scale(0.72) translate(-256 -256)">
+    <g fill="none" stroke-linecap="round" stroke-width="34">
+      <path d="M104 348 L214 238 L408 238" stroke="#7CB342" />
+      <path d="M104 172 L268 172 L408 312" stroke="#1964B7" />
+      <path d="M104 262 L164 262" stroke="#CD4692" />
+    </g>
+    <g fill="#ffffff">
+      <circle cx="214" cy="238" r="21" />
+      <circle cx="268" cy="172" r="21" />
+    </g>
+  </g>
+</svg>

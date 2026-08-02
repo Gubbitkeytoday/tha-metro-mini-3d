@@ -22,12 +22,22 @@ const browser = await puppeteer.launch({
   defaultViewport: { width: 1400, height: 900 },
 });
 const page = await browser.newPage();
+// Enter as a RETURNING visitor. On a fresh profile the first-run tour opens
+// and deliberately blocks clicks on everything behind it, which would make
+// every synthetic interaction below hit the tour instead of the app.
+await page.evaluateOnNewDocument(() => {
+  try {
+    localStorage.setItem("metro3d.preferences.v1", JSON.stringify({ tourSeen: true }));
+  } catch {
+    /* storage unavailable — the tour simply shows, as it would for a user */
+  }
+});
 page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
 page.on("console", (m) => {
   if (m.type() === "error") console.log(`[console.error] ${m.text().slice(0, 200)}`);
 });
 
-await page.goto(URL, { waitUntil: "networkidle2", timeout: 60_000 });
+await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
 await page.waitForFunction(() => !!window.__sim?.current && !!window.__store, { timeout: 30_000 });
 await page.waitForFunction(() => document.body.innerText.includes("runs"), { timeout: 30_000 });
 await new Promise((r) => setTimeout(r, 2_500));
@@ -117,11 +127,27 @@ const hiddenHit = await page.evaluate((idx) => {
 if (hiddenHit && hiddenHit.x > 0 && hiddenHit.y > 0 && hiddenHit.x < 1400 && hiddenHit.y < 900) {
   await page.mouse.click(hiddenHit.x, hiddenHit.y);
   await new Promise((r) => setTimeout(r, 500));
-  const picked = await page.evaluate(() => window.__store.getState().selectedRunIdx);
+  // The assertion is "the hidden train is not what got picked", NOT "nothing
+  // got picked". Demanding null was safe with 9 lines but became flaky at 10:
+  // MRT Blue shares corridors with Silom, so a *visible* Blue (or Sukhumvit,
+  // or Gold) train is often within the pick radius of the hidden Silom train's
+  // pixel, and picking that neighbour is correct behaviour, not a leak.
+  // Verified directly (2026-08-02) by clicking every on-screen Silom train
+  // with the line hidden: the picked route was 0, 6 or 9 — never 1.
+  const picked = await page.evaluate(() => {
+    const runIdx = window.__store.getState().selectedRunIdx;
+    if (runIdx === null) return { runIdx: null, routeIdx: null };
+    const { vehicles, count } = window.__sim.current.getInterpolated(performance.now());
+    for (let i = 0; i < count; i++) {
+      if (vehicles[i * 8 + 5] === runIdx) return { runIdx, routeIdx: vehicles[i * 8 + 6] | 0 };
+    }
+    return { runIdx, routeIdx: null };
+  });
   check(
     "a hidden line's train cannot be clicked",
-    picked === null,
-    `clicked (${hiddenHit.x.toFixed(0)}, ${hiddenHit.y.toFixed(0)}) on hidden route ${hiddenIdx} -> selectedRunIdx ${picked}`,
+    picked.runIdx === null || picked.routeIdx !== hiddenIdx,
+    `clicked (${hiddenHit.x.toFixed(0)}, ${hiddenHit.y.toFixed(0)}) on hidden route ${hiddenIdx} -> ` +
+      `selectedRunIdx ${picked.runIdx} on route ${picked.routeIdx}`,
   );
 } else {
   check(

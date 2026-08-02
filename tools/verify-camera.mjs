@@ -21,8 +21,18 @@ const browser = await puppeteer.launch({
   defaultViewport: { width: 1200, height: 800 },
 });
 const page = await browser.newPage();
+// Enter as a RETURNING visitor. On a fresh profile the first-run tour opens
+// and deliberately blocks clicks on everything behind it, which would make
+// every synthetic interaction below hit the tour instead of the app.
+await page.evaluateOnNewDocument(() => {
+  try {
+    localStorage.setItem("metro3d.preferences.v1", JSON.stringify({ tourSeen: true }));
+  } catch {
+    /* storage unavailable — the tour simply shows, as it would for a user */
+  }
+});
 page.on("pageerror", (e) => console.log(`[pageerror] ${e.message}`));
-await page.goto(URL, { waitUntil: "networkidle2", timeout: 60_000 });
+await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
 await page.waitForFunction(() => !!window.__map, { timeout: 30_000 });
 await new Promise((r) => setTimeout(r, 2_000));
 

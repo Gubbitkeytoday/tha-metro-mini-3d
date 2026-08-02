@@ -31,6 +31,29 @@ const MAX_SNAP_M: f64 = 150.0;
 /// coordinate quirk (555 m), not an unbounded escape hatch. A future
 /// exception past this is almost certainly a real mistake, not a known one.
 const ALLOW_LARGE_SNAP_CEILING_M: f64 = 1_000.0;
+/// How much further than a stop's own snap distance a *second* position on
+/// the same polyline may be and still count as the same platform passed
+/// twice. Small on purpose: the point is to catch a loop coming back past a
+/// station, not to collect every bit of track that happens to run nearby.
+const CANDIDATE_SLACK_M: f64 = 40.0;
+/// Above this, a leg's implied speed is a data problem rather than a fast
+/// train. The Airport Rail Link, the quickest thing in the feed, runs its
+/// longest express leg at well under half of it.
+const IMPLAUSIBLE_LEG_KMH: f64 = 200.0;
+/// Longest dwell kept when the published one would leave the following leg
+/// with no travel time at all. Six MRT Blue trips in the Namtang feed (5285,
+/// 7869, 7870, 7874-7876) list every stop as `arrival = 60i,
+/// departure = 60(i+1)`, i.e. a 60 s dwell and a **zero-second** ride to the
+/// next station, which puts 26 stations and 47 km inside 25 minutes. A train
+/// on one of those legs does not move and then teleports a kilometre and a
+/// half the instant the dwell ends.
+///
+/// The arrival times are left exactly as published — they are what a rider
+/// reads off a board — and the time is taken out of the dwell instead, which
+/// is the least load-bearing number in the row. It does not make the trip
+/// physically possible (nothing can, the feed's own total is impossible); it
+/// makes the train move between the stations instead of jumping.
+const MAX_DWELL_BEFORE_ZERO_LEG_S: u32 = 20;
 
 /// Weekday/weekend sample dates for the peak-concurrent scan, inside the
 /// Namtang feed's 20260101-20261231 validity window (contract §0). Ordinary
@@ -240,6 +263,8 @@ fn run() -> Result<(), String> {
     let proj = EnuProjector::new(ORIGIN_LNG_LAT.0, ORIGIN_LNG_LAT.1);
     let mut routes: Vec<RouteDoc> = Vec::new();
     let mut station_maps: Vec<HashMap<String, u16>> = Vec::new(); // stop_id -> station_idx
+    // stop_id -> every arc position on this route's polyline that serves it.
+    let mut arc_candidate_maps: Vec<HashMap<String, Vec<f64>>> = Vec::new();
     // Tracked separately from large_snap_exceptions below so a disclosed,
     // known exception (e.g. the Pink terminus's 555 m coordinate quirk)
     // doesn't hide a genuinely-bad snap on some other, future line — an
@@ -258,6 +283,9 @@ fn run() -> Result<(), String> {
 
         // Snap each station onto this line's polyline. (stop_id, snap_d, doc)
         let mut snapped: Vec<(String, f64, StationDoc)> = Vec::new();
+        // Every arc position this stop could be at, for the per-pattern choice
+        // below. A stop the line passes once has exactly one.
+        let mut arc_candidates: HashMap<String, Vec<f64>> = HashMap::new();
 
         match line.gtfs_route_id.as_deref() {
             Some(route_id) => {
@@ -366,6 +394,22 @@ fn run() -> Result<(), String> {
                             }
                         }
                     };
+                    // Candidates are gathered at the snap distance actually
+                    // achieved (plus a little slack) rather than at MAX_SNAP_M:
+                    // a stop that sits 8 m from the track must not also collect
+                    // a "candidate" 130 m away on a parallel viaduct.
+                    let candidates =
+                        spline::snap_candidates(&poly, &arcs, [p[0], p[1]], snap_d + CANDIDATE_SLACK_M);
+                    if candidates.len() > 1 {
+                        eprintln!(
+                            "note: stop {stop_id} ({}) is passed {} times by route {route_id}; \
+                             each pattern will use whichever position keeps its legs short",
+                            row.name,
+                            candidates.len()
+                        );
+                    }
+                    arc_candidates
+                        .insert(stop_id.clone(), candidates.iter().map(|&(a, _)| a).collect());
                     snapped.push((
                         stop_id.clone(),
                         snap_d,
@@ -395,6 +439,7 @@ fn run() -> Result<(), String> {
                         ));
                     }
                     max_snap_m = max_snap_m.max(snap_d);
+                    arc_candidates.insert(s.id.clone(), vec![arc_m]);
                     snapped.push((
                         s.id.clone(),
                         snap_d,
@@ -446,6 +491,7 @@ fn run() -> Result<(), String> {
             stations: snapped.into_iter().map(|(_, _, s)| s).collect(),
         });
         station_maps.push(map);
+        arc_candidate_maps.push(arc_candidates);
     }
 
     let interchange_overrides: Vec<(String, String)> = track_file
@@ -491,6 +537,7 @@ fn run() -> Result<(), String> {
         }
     }
     let mut patterns = Vec::new();
+    let mut zero_travel_repairs = 0usize;
     let mut pattern_idx_by_trip: HashMap<String, u16> = HashMap::new();
     for trip in &trips {
         let route_idx = route_idx_by_gtfs_id[trip.route_id.as_str()];
@@ -500,17 +547,48 @@ fn run() -> Result<(), String> {
         let t0 = rows.first().map(|r| r.arrival_s).unwrap_or(0);
         let mut stops = Vec::with_capacity(rows.len());
         let mut prev_arr = 0u32;
-        for row in rows {
+
+        // Pick this trip's arc position for every stop before building the
+        // stop list, because the choice is a property of the whole sequence:
+        // on a loop only the sequence says which way round a train goes.
+        let candidate_sets: Vec<Vec<f64>> = rows
+            .iter()
+            .map(|row| {
+                let fallback = || -> Result<Vec<f64>, String> {
+                    let idx = *station_maps[route_idx].get(&row.stop_id).ok_or(format!(
+                        "trip {}: unknown stop id {}",
+                        trip.trip_id, row.stop_id
+                    ))?;
+                    Ok(vec![routes[route_idx].stations[idx as usize].arc_m as f64])
+                };
+                match arc_candidate_maps[route_idx].get(&row.stop_id) {
+                    Some(c) if !c.is_empty() => Ok(c.clone()),
+                    _ => fallback(),
+                }
+            })
+            .collect::<Result<_, String>>()?;
+        let chosen_arcs = choose_pattern_arcs(&candidate_sets);
+
+        for (i, row) in rows.iter().enumerate() {
             let station_idx = *station_maps[route_idx]
                 .get(&row.stop_id)
                 .ok_or(format!("trip {}: unknown stop id {}", trip.trip_id, row.stop_id))?;
             let arrival_s = row.arrival_s - t0; // relative offsets; first stop = 0
-            let departure_s = row.departure_s - t0;
+            let mut departure_s = row.departure_s - t0;
             if departure_s < arrival_s || arrival_s < prev_arr {
                 return Err(format!("trip {}: non-monotonic stop times", trip.trip_id));
             }
+            // A dwell that runs right up to the next arrival leaves no time to
+            // travel — see MAX_DWELL_BEFORE_ZERO_LEG_S.
+            if let Some(next) = rows.get(i + 1) {
+                let next_arrival_s = next.arrival_s - t0;
+                if departure_s >= next_arrival_s && next_arrival_s > arrival_s {
+                    departure_s = (arrival_s + MAX_DWELL_BEFORE_ZERO_LEG_S).min(next_arrival_s - 1);
+                    zero_travel_repairs += 1;
+                }
+            }
             prev_arr = arrival_s;
-            let arc_m = routes[route_idx].stations[station_idx as usize].arc_m;
+            let arc_m = chosen_arcs[i] as f32;
             stops.push(PatternStop { station_idx, arrival_s, departure_s, arc_m });
         }
         let (_, headsign_en) = gtfs::split_th_en(&trip.headsign);
@@ -654,6 +732,60 @@ fn run() -> Result<(), String> {
             (weekend_peak, weekend_peak_sec, PEAK_SAMPLE_WEEKEND)
         };
 
+    // ---- Implied leg speeds -------------------------------------------------
+    //
+    // Every leg's arc length over its scheduled running time. This is the
+    // number that exposed the MRT Blue loop defect: a stop snapped to the
+    // wrong position on a stitched loop polyline produced a 38.3 km leg
+    // against a scheduled 150 s, i.e. a train crossing the city at ~900 km/h.
+    // Reported so the next such data problem is visible in the build output
+    // rather than only as an intermittent kinematics failure.
+    let mut leg_speeds: Vec<(f64, serde_json::Value)> = Vec::new();
+    for pattern in &doc.patterns {
+        for w in pattern.stops.windows(2) {
+            let seconds = (w[1].arrival_s.saturating_sub(w[0].departure_s)) as f64;
+            if seconds <= 0.0 {
+                continue;
+            }
+            let metres = (w[1].arc_m - w[0].arc_m).abs() as f64;
+            let kmh = metres / seconds * 3.6;
+            if kmh > IMPLAUSIBLE_LEG_KMH {
+                leg_speeds.push((
+                    kmh,
+                    serde_json::json!({
+                        "route": doc.routes[pattern.route_idx as usize].line_key,
+                        "gtfs_trip_id": pattern.gtfs_trip_id,
+                        "from": doc.routes[pattern.route_idx as usize].stations
+                            [w[0].station_idx as usize].name_en,
+                        "to": doc.routes[pattern.route_idx as usize].stations
+                            [w[1].station_idx as usize].name_en,
+                        "metres": metres,
+                        "seconds": seconds,
+                        "kmh": kmh,
+                    }),
+                ));
+            }
+        }
+    }
+    if zero_travel_repairs > 0 {
+        eprintln!(
+            "warning: {zero_travel_repairs} stop(s) published a dwell lasting until the next              arrival — dwell capped at {MAX_DWELL_BEFORE_ZERO_LEG_S}s so the train travels              instead of teleporting (see MAX_DWELL_BEFORE_ZERO_LEG_S)"
+        );
+    }
+    leg_speeds.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let worst_kmh = leg_speeds.first().map(|(k, _)| *k).unwrap_or(0.0);
+    let implausible_legs: Vec<&serde_json::Value> =
+        leg_speeds.iter().take(20).map(|(_, v)| v).collect();
+    for (kmh, leg) in leg_speeds.iter().take(20) {
+        eprintln!(
+            "warning: leg implies {kmh:.0} km/h — check the snap, not the train: {}",
+            serde_json::to_string(leg).unwrap_or_default()
+        );
+    }
+    if leg_speeds.len() > 20 {
+        eprintln!("warning: ...and {} more over {IMPLAUSIBLE_LEG_KMH:.0} km/h", leg_speeds.len() - 20);
+    }
+
     let report = serde_json::json!({
         "feed_version": v.feed_version,
         "stations": v.stations,
@@ -679,6 +811,10 @@ fn run() -> Result<(), String> {
         "peak_concurrent_time": peak_concurrent_time,
         "peak_concurrent_date": peak_concurrent_date,
         "peak_concurrent_weekday": {"date": PEAK_SAMPLE_WEEKDAY, "peak": weekday_peak, "time": weekday_peak_sec},
+        "max_leg_kmh": worst_kmh,
+        "zero_travel_legs_repaired": zero_travel_repairs,
+        "implausible_leg_count": leg_speeds.len(),
+        "implausible_legs": implausible_legs,
         "peak_concurrent_weekend": {"date": PEAK_SAMPLE_WEEKEND, "peak": weekend_peak, "time": weekend_peak_sec},
     });
     let report_str = serde_json::to_string_pretty(&report).unwrap();
@@ -699,6 +835,58 @@ fn run() -> Result<(), String> {
 /// GTFS `parent_station` cannot do this job: interchanges here span operators
 /// (BTS/BEM/SRT) that publish independent feeds and never share a parent.
 /// Distance-clustering with a manual escape hatch is the pragmatic substitute.
+/// Choose one arc position per stop for a single trip.
+///
+/// Exact dynamic program minimising the total distance travelled along the
+/// polyline, `sum |arc[i] - arc[i-1]|`. Almost every stop has one candidate,
+/// so this is linear in practice; where a loop offers two, the sequence as a
+/// whole decides — which is the only thing that *can* decide, since a single
+/// stop in isolation gives no clue which way round the train goes.
+///
+/// Ties go to the earlier candidate so the result is deterministic; a rebuilt
+/// cache must be byte-identical given the same inputs.
+fn choose_pattern_arcs(candidates: &[Vec<f64>]) -> Vec<f64> {
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    // cost[j] = cheapest total so far ending at candidate j of this stop.
+    let mut cost: Vec<f64> = vec![0.0; candidates[0].len()];
+    let mut back: Vec<Vec<usize>> = Vec::with_capacity(candidates.len());
+    back.push(vec![usize::MAX; candidates[0].len()]);
+
+    for i in 1..candidates.len() {
+        let mut next = vec![f64::INFINITY; candidates[i].len()];
+        let mut from = vec![0usize; candidates[i].len()];
+        for (j, &arc) in candidates[i].iter().enumerate() {
+            for (k, &prev) in candidates[i - 1].iter().enumerate() {
+                let c = cost[k] + (arc - prev).abs();
+                if c < next[j] {
+                    next[j] = c;
+                    from[j] = k;
+                }
+            }
+        }
+        cost = next;
+        back.push(from);
+    }
+
+    let mut end = 0usize;
+    for (j, &c) in cost.iter().enumerate() {
+        if c < cost[end] {
+            end = j;
+        }
+    }
+    let mut out = vec![0.0; candidates.len()];
+    let mut j = end;
+    for i in (0..candidates.len()).rev() {
+        out[i] = candidates[i][j];
+        if i > 0 {
+            j = back[i][j];
+        }
+    }
+    out
+}
+
 fn link_interchanges(
     routes: &mut [RouteDoc],
     radius_m: f64,
@@ -826,6 +1014,91 @@ fn runs_for_pattern(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- per-pattern arc choice (the MRT Blue loop) ------------------------
+
+    #[test]
+    fn a_stop_passed_once_is_used_as_is() {
+        let out = choose_pattern_arcs(&[vec![0.0], vec![1_000.0], vec![2_000.0]]);
+        assert_eq!(out, vec![0.0, 1_000.0, 2_000.0]);
+    }
+
+    #[test]
+    fn a_stop_passed_twice_takes_the_position_the_sequence_implies() {
+        // Tha Phra in miniature: the middle stop exists at 1 km and again at
+        // 39 km. A trip running outward from 0 must use the near one...
+        let outward =
+            choose_pattern_arcs(&[vec![0.0], vec![1_000.0, 39_000.0], vec![2_000.0]]);
+        assert_eq!(outward[1], 1_000.0);
+        // ...and a trip arriving from the far arm must use the far one, or its
+        // legs measure the whole way round the loop.
+        let inward =
+            choose_pattern_arcs(&[vec![38_000.0], vec![1_000.0, 39_000.0], vec![40_000.0]]);
+        assert_eq!(inward[1], 39_000.0);
+    }
+
+    #[test]
+    fn the_result_is_the_optimum_over_the_whole_trip() {
+        // Checked against brute force rather than against a hand-picked
+        // answer: several of those turn out to be genuine ties (any position
+        // between two stops gives the same total), and asserting one arm of a
+        // tie tests the tie-break, not the optimisation.
+        let sets = vec![
+            vec![0.0, 41_000.0],
+            vec![1_000.0, 39_000.0],
+            vec![2_000.0, 38_000.0],
+            vec![37_000.0],
+            vec![500.0, 40_500.0],
+        ];
+        let total = |pick: &[f64]| pick.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f64>();
+        let chosen = choose_pattern_arcs(&sets);
+
+        let mut best = f64::INFINITY;
+        let mut pick = vec![0.0; sets.len()];
+        let mut idx = vec![0usize; sets.len()];
+        loop {
+            for (i, &j) in idx.iter().enumerate() {
+                pick[i] = sets[i][j];
+            }
+            best = best.min(total(&pick));
+            let mut i = 0;
+            while i < sets.len() {
+                idx[i] += 1;
+                if idx[i] < sets[i].len() {
+                    break;
+                }
+                idx[i] = 0;
+                i += 1;
+            }
+            if i == sets.len() {
+                break;
+            }
+        }
+        assert!(
+            (total(&chosen) - best).abs() < 1e-9,
+            "chose {chosen:?} totalling {} against the best {best}",
+            total(&chosen)
+        );
+    }
+
+    #[test]
+    fn no_leg_is_longer_than_the_short_way_round() {
+        let chosen = choose_pattern_arcs(&[
+            vec![39_500.0],
+            vec![1_000.0, 39_000.0],
+            vec![38_500.0],
+        ]);
+        let worst = chosen
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f64, f64::max);
+        assert!(worst < 1_000.0, "worst leg {worst} m — went the long way round");
+    }
+
+    #[test]
+    fn choosing_over_no_stops_is_not_a_panic() {
+        assert!(choose_pattern_arcs(&[]).is_empty());
+    }
 
     /// A two-line network file, minimal but structurally real.
     ///

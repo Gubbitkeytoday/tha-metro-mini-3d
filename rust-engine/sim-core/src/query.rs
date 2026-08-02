@@ -160,7 +160,9 @@ impl SimWorld {
         date_yyyymmdd: u32,
         sec_of_day: f64,
     ) -> Option<RunDetail> {
-        let idx = run_idx as usize;
+        // The UI passes back whatever lane 5 carried, which for a spillover
+        // vehicle is the run index plus a tag (see `vehicle_run_idx`).
+        let idx = crate::world::vehicle_run_idx(run_idx) as usize;
         let doc = self.doc();
         let run = doc.runs.get(idx)?;
         let pattern = &doc.patterns[run.pattern_idx as usize];
@@ -207,7 +209,7 @@ impl SimWorld {
             .map(|n| stops[n].arrival_sec as i64 - (run.start_sec as i64 + t as i64));
 
         Some(RunDetail {
-            run_idx,
+            run_idx: idx as u32,
             route_idx: pattern.route_idx,
             route_name: route.name_en.clone(),
             color_rgb: route.color_rgb,

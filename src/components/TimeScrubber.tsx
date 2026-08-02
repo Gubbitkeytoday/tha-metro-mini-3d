@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { activeSimClient } from "../sim/SimClient";
 import { bangkokDayStartMs, bangkokSecOfDay, DAY_SEC, formatServiceSec } from "../sim/time";
 import { useAppStore } from "../stores/useAppStore";
+import { useStrings } from "../i18n/useStrings";
+import { GLASS } from "./glass";
 
 /**
  * Time scrubber (F2.3): drag to any moment of the current Bangkok service day
@@ -20,6 +22,7 @@ const STEP_SEC = 60;
 const TICK_MS = 1000;
 
 export function TimeScrubber() {
+  const t = useStrings();
   const engineStatus = useAppStore((s) => s.engineStatus);
   const [sec, setSec] = useState(() => bangkokSecOfDay(Date.now()));
   const [dragging, setDragging] = useState(false);
@@ -60,10 +63,14 @@ export function TimeScrubber() {
   };
 
   return (
-    <div className="pointer-events-auto w-[min(32rem,calc(100vw-2rem))] rounded-xl bg-white/85 px-4 py-2.5 shadow-lg backdrop-blur">
-      <div className="flex items-center gap-3">
-        <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-400">
-          Scrub
+    <div
+      className={`pointer-events-auto w-[min(32rem,calc(100vw-1rem))] rounded-xl px-3 py-2.5 sm:px-4 ${GLASS}`}
+    >
+      <div className="flex items-center gap-3" data-tour="scrub">
+        {/* The label is pure decoration next to a slider that is obviously a
+            slider — on a phone those 34px buy visible track instead. */}
+        <span className="hidden shrink-0 text-[10px] uppercase tracking-wide text-slate-400 sm:inline">
+          {t.scrub}
         </span>
         <input
           type="range"
@@ -71,7 +78,7 @@ export function TimeScrubber() {
           max={DAY_SEC - STEP_SEC}
           step={STEP_SEC}
           value={Math.min(sec, DAY_SEC - STEP_SEC)}
-          aria-label="Scrub to time of day"
+          aria-label={t.scrub}
           onPointerDown={() => setDragging(true)}
           onPointerUp={() => setDragging(false)}
           onPointerCancel={() => setDragging(false)}
@@ -80,7 +87,10 @@ export function TimeScrubber() {
             setSec(next);
             scrubTo(next);
           }}
-          className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-slate-300 accent-slate-900"
+          // Track/thumb styling lives in index.css so the thumb can grow to a
+          // real touch target under `@media (pointer: coarse)`; py-2 widens
+          // the grab area vertically without changing the visual track height.
+          className="w-full cursor-pointer py-2"
         />
         <span className="w-12 shrink-0 text-right font-mono text-xs tabular-nums text-slate-700">
           {formatServiceSec(sec)}

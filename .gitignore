@@ -4,3 +4,10 @@ rust-engine/target/
 *.tsbuildinfo
 *.local
 .DS_Store
+
+# Intermediate frames from `npm run media:video` — the encoded outputs in
+# docs/media/ are what is committed.
+.video-frames/
+
+# Local editor / agent tooling config.
+.claude/

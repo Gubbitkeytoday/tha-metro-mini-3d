@@ -3,8 +3,16 @@ export type LngLatAlt = [number, number, number];
 
 export interface Station {
   id: number | string;
+  /** English name — kept as its own field because it is the fallback everything else leans on. */
   name: string;
   nameTh: string;
+  /**
+   * Every localised name OpenStreetMap carries for this stop, keyed by
+   * language subtag (`en`, `th`, `zh`, `ja`, …). Coverage is real but uneven —
+   * see `src/i18n/strings.ts` for the survey — so readers must go through
+   * `stationName()` rather than indexing this directly.
+   */
+  names: Record<string, string>;
   code: string;
   position: LngLatAlt;
 }
@@ -25,6 +33,15 @@ export interface LineGeometry {
   relationId: number;
   osmName: string;
   track: LngLatAlt[];
+  /**
+   * Per-track-point structure, parallel to `track` (MVP 6). A line is no
+   * longer necessarily uniform: MRT Blue runs in bored tunnel through the core
+   * and on viaduct along both outer arms, so `structure` above is only the
+   * nominal/fallback value and this is what the renderer splits deck meshes
+   * on. Derived from each OSM way's tunnel/bridge tags by
+   * tools/track-structure.mjs, applied in tools/fetch-network.mjs.
+   */
+  trackStructures: Structure[];
   stations: Station[];
 }
 

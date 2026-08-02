@@ -90,6 +90,60 @@ pub fn catmull_rom_resample(pts: &[P3], spacing: f64) -> Result<Vec<P3>, String>
     Ok(out)
 }
 
+/// Every place along the polyline that comes within `max_d` of `p`, as
+/// `(arc_m, distance_m)` ordered by arc.
+///
+/// A single nearest point is the wrong answer on a line that passes the same
+/// platform twice. MRT Blue is a loop that serves Tha Phra once on the circle
+/// and once on the Lak Song arm, and the whole route is stitched into one open
+/// polyline — so snapping that stop to its *nearest* arc position gave every
+/// pattern using the other Tha Phra a leg measured the long way round the
+/// circle (38.3 km against a scheduled 150 s, i.e. a train sliding the length
+/// of the line at ~900 km/h). Keeping all the candidates lets the pattern
+/// builder pick, per trip, the one that keeps its legs short.
+///
+/// "Comes within `max_d`" is evaluated as contiguous runs of segments whose
+/// closest approach is under the threshold; each run contributes its own
+/// minimum. That way one platform passed once yields exactly one candidate,
+/// however many resampled segments it spans.
+pub fn snap_candidates(poly: &[P3], arc: &[f64], p: [f64; 2], max_d: f64) -> Vec<(f64, f64)> {
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    let max_d2 = max_d * max_d;
+    let mut run: Option<(f64, f64)> = None; // (arc, d2) best within the current run
+    for i in 0..poly.len().saturating_sub(1) {
+        let (a, d2) = closest_on_segment(poly, arc, i, p);
+        if d2 <= max_d2 {
+            match run {
+                Some((_, best)) if best <= d2 => {}
+                _ => run = Some((a, d2)),
+            }
+        } else if let Some((a, d2)) = run.take() {
+            out.push((a, d2.sqrt()));
+        }
+    }
+    if let Some((a, d2)) = run {
+        out.push((a, d2.sqrt()));
+    }
+    out
+}
+
+/// Closest point to `p` on segment `i`, as `(arc_m, distance_squared)`.
+fn closest_on_segment(poly: &[P3], arc: &[f64], i: usize, p: [f64; 2]) -> (f64, f64) {
+    let ax = poly[i][0];
+    let ay = poly[i][1];
+    let abx = poly[i + 1][0] - ax;
+    let aby = poly[i + 1][1] - ay;
+    let len2 = abx * abx + aby * aby;
+    let t = if len2 > 0.0 {
+        (((p[0] - ax) * abx + (p[1] - ay) * aby) / len2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let dx = p[0] - (ax + abx * t);
+    let dy = p[1] - (ay + aby * t);
+    (arc[i] + (arc[i + 1] - arc[i]) * t, dx * dx + dy * dy)
+}
+
 /// Nearest point on the polyline (2D, x/y) to `p`.
 /// Returns (arc_m, distance_m).
 pub fn snap_to_polyline(poly: &[P3], arc: &[f64], p: [f64; 2]) -> (f64, f64) {
@@ -146,6 +200,52 @@ mod tests {
         }
         assert_eq!(out.first().unwrap()[0], 0.0);
         assert!((out.last().unwrap()[0] - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_platform_passed_once_yields_exactly_one_candidate() {
+        // Many resampled segments run within the threshold; they are one
+        // approach, not one candidate each.
+        let poly: Vec<P3> = (0..=100).map(|i| [i as f64, 0.0, 0.0]).collect();
+        let arc = cumulative_arc(&poly);
+        let got = snap_candidates(&poly, &arc, [50.0, 3.0], 20.0);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!((got[0].0 - 50.0).abs() < 1e-9);
+        assert!((got[0].1 - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_loop_passing_the_same_place_twice_yields_both_positions() {
+        // Out along y=0 and back along y=8: a platform between the two tracks
+        // is close to the line twice, and the whole point is to keep both.
+        let mut poly: Vec<P3> = (0..=100).map(|i| [i as f64, 0.0, 0.0]).collect();
+        poly.extend((0..=100).rev().map(|i| [i as f64, 8.0, 0.0]));
+        let arc = cumulative_arc(&poly);
+        let got = snap_candidates(&poly, &arc, [50.0, 4.0], 10.0);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got[0].0 < got[1].0, "ordered by arc: {got:?}");
+        assert!((got[0].1 - 4.0).abs() < 1e-6 && (got[1].1 - 4.0).abs() < 1e-6, "{got:?}");
+    }
+
+    #[test]
+    fn a_position_past_the_threshold_is_not_a_candidate() {
+        let mut poly: Vec<P3> = (0..=100).map(|i| [i as f64, 0.0, 0.0]).collect();
+        poly.extend((0..=100).rev().map(|i| [i as f64, 400.0, 0.0]));
+        let arc = cumulative_arc(&poly);
+        let got = snap_candidates(&poly, &arc, [50.0, 5.0], 40.0);
+        assert_eq!(got.len(), 1, "{got:?}");
+    }
+
+    #[test]
+    fn the_best_candidate_agrees_with_the_plain_nearest_snap() {
+        let poly = vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, 100.0, 0.0]];
+        let arc = cumulative_arc(&poly);
+        let (a, d) = snap_to_polyline(&poly, &arc, [104.0, 60.0]);
+        let got = snap_candidates(&poly, &arc, [104.0, 60.0], 150.0);
+        let best = got.iter().cloned().fold((0.0, f64::INFINITY), |acc, c| {
+            if c.1 < acc.1 { c } else { acc }
+        });
+        assert!((best.0 - a).abs() < 1e-9 && (best.1 - d).abs() < 1e-9, "{got:?}");
     }
 
     #[test]

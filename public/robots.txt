@@ -1,0 +1,9 @@
+# Everything here is public, free and meant to be found.
+User-agent: *
+Allow: /
+
+# The binary timetable cache and the preprocessor report are build artefacts,
+# not pages — indexing them wastes crawl budget and surfaces nothing useful.
+Disallow: /data/
+
+Sitemap: https://metro.itstom.me/sitemap.xml

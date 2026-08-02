@@ -6,6 +6,18 @@ use crate::calendar::{previous_date, service_active_on};
 use crate::model::{CacheDoc, PatternDoc, RouteDoc, TMB_MAGIC, TMB_VERSION};
 
 pub const VEHICLE_STRIDE: usize = 8; // f32 lanes per vehicle
+
+/// Added to lane 5 for a vehicle from the previous service day's spillover.
+/// Comfortably above any real run count and far below f32's 2^24 exact-integer
+/// limit, so the tagged value is still an exact float.
+pub const SPILLOVER_RUN_TAG: usize = 1 << 20;
+
+/// Strip the spillover tag from a lane-5 value to get the `CacheDoc.runs`
+/// index. Schedule queries take a run index; the UI hands them whatever the
+/// vehicle buffer carried.
+pub fn vehicle_run_idx(lane5: u32) -> u32 {
+    lane5 & (SPILLOVER_RUN_TAG as u32 - 1)
+}
 /// Frame-buffer capacity. Sized well above SRS NF1's 300-concurrent target so
 /// a network peak is never silently clipped; the cost is buffer memory only
 /// (1024 * 8 * 4 = 32 KB per frame buffer, 3 in the pool).
@@ -157,9 +169,9 @@ impl SimWorld {
             let pattern = &self.doc.patterns[run.pattern_idx as usize];
             let svc = run.service_idx as usize;
 
-            for (active, t_abs) in [
-                (active_today[svc], sec_of_day),
-                (active_prev[svc], sec_of_day + 86_400.0),
+            for (active, t_abs, spillover) in [
+                (active_today[svc], sec_of_day, false),
+                (active_prev[svc], sec_of_day + 86_400.0, true),
             ] {
                 if !active {
                     continue;
@@ -186,7 +198,20 @@ impl SimWorld {
                     out[o + 2] = pos[2];
                     out[o + 3] = yaw;
                     out[o + 4] = pose.state;
-                    out[o + 5] = run_idx as f32;
+                    // Yesterday's copy of a run is a DIFFERENT vehicle from
+                    // today's, and around the rollover both can be live at
+                    // once at opposite ends of the line. Everything downstream
+                    // — the render-side lerp, selection, follow-camera —
+                    // matches vehicles across frames by this lane, so sharing
+                    // one id made a train streak across the city whenever the
+                    // two copies swapped in and out. Tag the spillover copy so
+                    // the identity is per vehicle; `vehicle_run_idx` takes the
+                    // tag back off for schedule queries.
+                    out[o + 5] = if spillover {
+                        (run_idx + SPILLOVER_RUN_TAG) as f32
+                    } else {
+                        run_idx as f32
+                    };
                     out[o + 6] = pattern.route_idx as f32;
                     out[o + 7] = pose.progress;
                     count += 1;
@@ -447,7 +472,12 @@ mod tests {
     }
 
     fn find_run(v: &[[f32; 8]], run_idx: usize) -> Option<[f32; 8]> {
-        v.iter().copied().find(|r| r[5] == run_idx as f32)
+        // Match through `vehicle_run_idx`: a spillover vehicle carries the
+        // run index plus its tag, and these tests ask "is this run live",
+        // not "which of its two copies".
+        v.iter()
+            .copied()
+            .find(|r| vehicle_run_idx(r[5] as u32) == run_idx as u32)
     }
 
     const WED: u32 = 20260722; // ordinary Wednesday (weekday service active)
@@ -551,6 +581,17 @@ mod tests {
         let (pos, yaw) = sample_track(route, 100.0, true);
         assert!((pos[0] - 100.0).abs() < 1e-4 && pos[1].abs() < 1e-4);
         assert!(yaw.abs() < 1e-5, "reverse vertex tangent yaw={yaw}");
+    }
+
+    #[test]
+    fn a_spillover_vehicle_gets_its_own_identity() {
+        // Yesterday's copy and today's copy of the same run are two vehicles.
+        assert_eq!(vehicle_run_idx(7 as u32), 7);
+        assert_eq!(vehicle_run_idx((7 + SPILLOVER_RUN_TAG) as u32), 7);
+        assert_ne!(7u32, (7 + SPILLOVER_RUN_TAG) as u32);
+        // Still an exact f32, so the lane survives the buffer round trip.
+        let tagged = (8_192 + SPILLOVER_RUN_TAG) as f32;
+        assert_eq!(tagged as u32 as usize, 8_192 + SPILLOVER_RUN_TAG);
     }
 
     #[test]

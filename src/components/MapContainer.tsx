@@ -12,6 +12,12 @@ import { NetworkLayer } from "../map/ThreeLayer";
 import { installCameraControls } from "../map/cameraControls";
 import { FollowCamera } from "../map/followCamera";
 import { pickAt } from "../map/selection";
+import { NightPainter } from "../map/dayNight";
+import { activeMap } from "../map/activeMap";
+import { BuildingLayers } from "../map/buildings";
+import { UserLocation } from "../map/geolocation";
+import { isNightAt, solarPosition } from "../map/sunPosition";
+import { bangkokDayStartMs } from "../sim/time";
 import { VehicleManager } from "../map/VehicleManager";
 import { localToLngLat, ORIGIN_LNG_LAT } from "../map/coordinates";
 import { SimClient, activeSimClient } from "../sim/SimClient";
@@ -50,11 +56,15 @@ export function MapContainer() {
       },
     });
     map.addControl(new NavigationControl({ visualizePitch: true }), "top-right");
+    // Published for the guided tour, which flies the camera to whatever each
+    // step is describing. Cleared in the teardown below.
+    activeMap.current = map;
     const removeCameraControls = installCameraControls(map);
 
     let sim: SimClient | null = null;
     let unsubscribeVisibility: (() => void) | null = null;
     let rafId = 0;
+    let lightingTimer = 0;
     // style.load fires asynchronously; if effect cleanup runs first (a React
     // StrictMode double-invoke, or a fast unmount before tiles finish
     // loading), sim/unsubscribeVisibility/rafId below are created after
@@ -62,6 +72,11 @@ export function MapContainer() {
     // them down. Guarded at the end of the style.load handler.
     let disposed = false;
     const follow = new FollowCamera();
+    const nightPainter = new NightPainter();
+    const buildingLayers = new BuildingLayers();
+    const userLocation = new UserLocation((status) =>
+      useAppStore.getState().setLocationStatus(status),
+    );
     // Latest interpolated poses, kept for click hit-testing. Owned by the
     // render path — never copied into React state (§3A.7).
     let lastVehicles: Float32Array<ArrayBufferLike> = new Float32Array(0);
@@ -91,16 +106,95 @@ export function MapContainer() {
           vehicleManager.setRouteVisible(i, visible);
         }
       }
+      // Scene modes are UI state too — seed them, then keep them in sync the
+      // same way, off the per-frame path.
+      {
+        const initial = useAppStore.getState();
+        layer.setUndergroundVisible(initial.undergroundVisible);
+        layer.setLanguage(initial.language);
+        layer.setStationLabelsVisible(initial.showStationLabels);
+        layer.setShadows(initial.shadows);
+        buildingLayers.setVisible(map, initial.buildings);
+      }
+
+      // The locate button lives in the UI but the tracker needs the map, so
+      // the component owns the instance and lends the store a handler.
+      useAppStore.getState().setLocationHandler(() => {
+        if (userLocation.isTracking) userLocation.stop();
+        else userLocation.start(map);
+      });
+
+      /**
+       * Re-evaluate the sun for the current sim time (F3.3). Called on a slow
+       * tick and on any lighting-mode change — never per frame: the sun moves
+       * 0.004° per real second, and even at 60× warp a 1 Hz update is four
+       * times finer than anything visible.
+       *
+       * Under `auto` the day/night decision comes from the sun's altitude, so
+       * the base-map repaint and the 3D lighting flip at the same instant
+       * (civil twilight) instead of drifting apart.
+       */
+      const applyLighting = () => {
+        const state = useAppStore.getState();
+        const simNow = activeSimClient.current?.getSimNow() ?? Date.now();
+        const sun =
+          state.lightingMode === "auto"
+            ? solarPosition(simNow)
+            : // Pinned modes still need a plausible sun direction, so borrow
+              // mid-morning and late-evening geometry for the same day rather
+              // than inventing an angle.
+              solarPosition(bangkokDayStartMs(simNow) + (state.lightingMode === "day" ? 10 : 22) * 3_600_000);
+        layer.setSun(sun);
+        const night = state.lightingMode === "auto" ? isNightAt(sun.altitudeDeg) : state.lightingMode === "night";
+        if (night !== state.night) state.setNight(night);
+        nightPainter.apply(map, night);
+      };
+      applyLighting();
+      lightingTimer = window.setInterval(applyLighting, 1000);
+
       // Visibility is UI state, so it drives the scene through a subscription
       // rather than the per-frame path.
       unsubscribeVisibility = useAppStore.subscribe((state, prev) => {
-        if (state.hiddenRoutes === prev.hiddenRoutes) return;
-        for (let i = 0; i < net.lines.length; i++) {
-          const visible = state.isRouteVisible(i);
-          layer.setLineVisible(i, visible);
-          vehicleManager.setRouteVisible(i, visible);
+        let touchedScene = false;
+        if (state.hiddenRoutes !== prev.hiddenRoutes) {
+          for (let i = 0; i < net.lines.length; i++) {
+            const visible = state.isRouteVisible(i);
+            layer.setLineVisible(i, visible);
+            vehicleManager.setRouteVisible(i, visible);
+          }
+          touchedScene = true;
         }
-        map.triggerRepaint();
+        if (state.undergroundVisible !== prev.undergroundVisible) {
+          layer.setUndergroundVisible(state.undergroundVisible);
+          touchedScene = true;
+        }
+        if (state.showStationLabels !== prev.showStationLabels) {
+          layer.setStationLabelsVisible(state.showStationLabels);
+          touchedScene = true;
+        }
+        if (state.shadows !== prev.shadows) {
+          layer.setShadows(state.shadows);
+          touchedScene = true;
+        }
+        if (state.buildings !== prev.buildings) {
+          buildingLayers.setVisible(map, state.buildings);
+          touchedScene = true;
+        }
+        if (state.language !== prev.language) {
+          // Rebuilds every label texture — a user action, never per frame.
+          layer.setLanguage(state.language);
+          touchedScene = true;
+        }
+        if (state.lightingMode !== prev.lightingMode) {
+          applyLighting();
+          touchedScene = true;
+        } else if (state.night !== prev.night) {
+          // `night` moved on its own — the auto tick crossing twilight.
+          touchedScene = true;
+        }
+        // The store fires on every state change (the clock, the vehicle count,
+        // a selection); repaint only when one of these actually moved.
+        if (touchedScene) map.triggerRepaint();
       });
 
       store.setEngineStatus("loading");
@@ -161,6 +255,7 @@ export function MapContainer() {
         // Cleanup already ran before this fired — tear down what it missed
         // instead of leaking a running rAF loop, worker and subscription.
         cancelAnimationFrame(rafId);
+        clearInterval(lightingTimer);
         unsubscribeVisibility?.();
         sim?.dispose();
         if (activeSimClient.current === sim) activeSimClient.current = null;
@@ -241,6 +336,12 @@ export function MapContainer() {
     return () => {
       disposed = true;
       cancelAnimationFrame(rafId);
+      clearInterval(lightingTimer);
+      // Stop the GPS watch explicitly: a live `watchPosition` keeps the
+      // device's location hardware awake long after the component is gone.
+      activeMap.current = null;
+      userLocation.dispose();
+      useAppStore.getState().setLocationHandler(null);
       removeCameraControls();
       unsubscribeFollow();
       unsubscribeVisibility?.();
