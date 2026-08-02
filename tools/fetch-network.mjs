@@ -25,6 +25,7 @@ import {
   STRUCTURE_ALTITUDE_M,
   structureOfWay,
 } from "./lines.config.mjs";
+import { limitTrackGradient, nearestTrackAltitude } from "./trackProfile.mjs";
 
 const OUT_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../src/data/network.json");
 
@@ -202,26 +203,51 @@ async function fetchBranch(relationId, branchKey, defaultStructure) {
       `(${Object.entries(histogram).map(([k, v]) => `${k}:${v}`).join(" ")}), ` +
       `${stations.length} stops`,
   );
-  // Station altitude still uses the line's default structure — a station's
-  // own OSM node carries no tunnel/bridge/layer tag to classify against.
+  // Step-function altitude straight from STRUCTURE_ALTITUDE_M, per point —
+  // this is what a raw OSM tag flip produces (e.g. a 108% grade wall where
+  // an untagged way meets a tunnel=yes way). limitTrackGradient turns that
+  // into a physically plausible ramp (MVP 6 Task 13, defect A) without
+  // touching lon/lat/structure — see tools/trackProfile.mjs.
+  const rawTrack = path.map(([lon, lat, structure]) => [
+    lon,
+    lat,
+    STRUCTURE_ALTITUDE_M[structure],
+    structure,
+  ]);
+  const track = limitTrackGradient(rawTrack);
+
+  // Station altitude still defaults to the line's blanket nominal value
+  // (STRUCTURE_ALTITUDE_M[defaultStructure]) — a station's own OSM node
+  // carries no tunnel/bridge/layer tag to classify against, same as before
+  // Task 13. The one narrow addition: if a station's nearest track point is
+  // itself inside a ramp zone (its altitude changed between rawTrack and
+  // the limited track), resample the station from the ramped value instead,
+  // so its pole reaches the ramped deck rather than a stale nominal one.
+  // Deliberately scoped this narrowly rather than "always resample from the
+  // nearest ramped point": that broader version would also silently fix a
+  // much bigger, separate pre-existing issue (every station on a
+  // mixed-structure line like Blue currently renders at the line's single
+  // nominal altitude regardless of whether that specific station is
+  // actually underground) — real, but out of Task 13's scope; see the
+  // Task 13 report.
   const stationAltitudeM = STRUCTURE_ALTITUDE_M[defaultStructure];
   return {
     relationId,
     osmName: rel.tags?.name ?? "",
     // [lon, lat, altitude_m, structure] per SRS §F1.3, structure per-point
-    track: path.map(([lon, lat, structure]) => [
-      lon,
-      lat,
-      STRUCTURE_ALTITUDE_M[structure],
-      structure,
-    ]),
-    stations: stations.map((s) => ({
-      id: s.id,
-      name: s.name ?? "",
-      nameTh: s.nameTh ?? "",
-      code: s.code ?? "",
-      position: [s.lon, s.lat, stationAltitudeM],
-    })),
+    track,
+    stations: stations.map((s) => {
+      const { index } = nearestTrackAltitude(s.lon, s.lat, track);
+      const onRamp = index >= 0 && rawTrack[index][2] !== track[index][2];
+      const altitude = onRamp ? track[index][2] : stationAltitudeM;
+      return {
+        id: s.id,
+        name: s.name ?? "",
+        nameTh: s.nameTh ?? "",
+        code: s.code ?? "",
+        position: [s.lon, s.lat, altitude],
+      };
+    }),
   };
 }
 

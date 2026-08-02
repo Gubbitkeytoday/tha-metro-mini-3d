@@ -1,7 +1,7 @@
 {
-  "bytes": 492198,
+  "bytes": 492112,
   "feed_version": "20260801",
-  "gzip_bytes": 283321,
+  "gzip_bytes": 283441,
   "interchanges": [
     {
       "a": "sukhumvit/Samrong",
@@ -20,7 +20,7 @@
       "b": "arl/Phaya Thai"
     },
     {
-      "a": "sukhumvit/BTS Mo Chit",
+      "a": "sukhumvit/Mo Chit",
       "b": "blue/Chatuchak Park"
     },
     {
@@ -75,7 +75,7 @@
       "snap_m": 554.7298250815825
     }
   ],
-  "max_snap_m": 109.47440190080823,
+  "max_snap_m": 109.47373318622579,
   "patterns": 58,
   "peak_concurrent": 246,
   "peak_concurrent_date": 20260722,
@@ -120,7 +120,7 @@
     },
     {
       "gtfs_route_id": "5",
-      "length_m": 28588.927734375,
+      "length_m": 28587.630859375,
       "name_en": "Airport Rail Link",
       "patterns": 4,
       "runs": 370,
@@ -156,25 +156,25 @@
     },
     {
       "gtfs_route_id": "2026",
-      "length_m": 23408.69140625,
+      "length_m": 23379.390625,
       "name_en": "SRT Dark Red Line",
       "patterns": 2,
       "runs": 169,
       "stations": 10,
-      "track_points": 2342
+      "track_points": 2339
     },
     {
       "gtfs_route_id": "2027",
-      "length_m": 15108.5078125,
+      "length_m": 15090.3974609375,
       "name_en": "SRT Light Red Line",
       "patterns": 2,
       "runs": 90,
       "stations": 4,
-      "track_points": 1512
+      "track_points": 1510
     },
     {
       "gtfs_route_id": "3",
-      "length_m": 46960.4453125,
+      "length_m": 46957.03125,
       "name_en": "MRT Blue Line",
       "patterns": 24,
       "runs": 3712,
