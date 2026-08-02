@@ -113,6 +113,20 @@ const DAY_AMBIENT = 0xffffff;
  * Deliberately never goes fully dark: at 03:00 the user still needs to read
  * the network. Night is a cool, dim wash rather than an accurate simulation
  * of an unlit city.
+ *
+ * The night floors here are a fix for a real reported defect, not just a
+ * stylistic choice: Task 10b (`basemapTheme.ts`) independently darkens the
+ * MapLibre basemap at night, and the two dimmings compound — every track
+ * deck / station / vehicle in the Three.js scene is `MeshLambertMaterial`,
+ * so its rendered colour is (roughly) `material.color * (ambient + diffuse)`.
+ * With the old floors (sunIntensity 0.15, ambientIntensity 0.55) a dark line
+ * colour like Blue's `#1964B7` rendered as near-black against the also-dark
+ * basemap: "the night theme makes all the lines invisible". The Three scene
+ * contains *only* the network (no basemap geometry), so raising these floors
+ * brightens the network without touching the city's darkness at all — the
+ * fix the human asked for (see `sun.test.ts`'s "keeps the deep-night
+ * lighting floor..." test, and Task 14's report for the alternative
+ * (emissive materials) that was considered and rejected).
  */
 export function skyPalette(elevationDeg: number): SkyPalette {
   // 0 at deep night, 1 at full day, with a golden band around the horizon.
@@ -122,8 +136,8 @@ export function skyPalette(elevationDeg: number): SkyPalette {
   const base = mixHex(NIGHT_SUN, DAY_SUN, day);
   return {
     sun: mixHex(base, GOLDEN_SUN, golden * 0.8),
-    sunIntensity: lerp(0.15, 2.2, day),
+    sunIntensity: lerp(0.9, 2.2, day),
     ambient: mixHex(NIGHT_AMBIENT, DAY_AMBIENT, day),
-    ambientIntensity: lerp(0.55, 1.6, day),
+    ambientIntensity: lerp(1.35, 1.6, day),
   };
 }

@@ -51,4 +51,20 @@ describe("skyPalette", () => {
     const c = skyPalette(3).sun;
     expect((c >> 16) & 0xff).toBeGreaterThan(c & 0xff);
   });
+
+  it("keeps the deep-night lighting floor bright enough for the network to read against a dark basemap", () => {
+    // Regression for the reported "night theme makes all the lines
+    // invisible" defect: the previous floors (sunIntensity 0.15,
+    // ambientIntensity 0.55) left MeshLambertMaterial track/station/vehicle
+    // colours reading as near-black once multiplied by dark line colours
+    // (e.g. Blue's #1964B7). Both floors must stay strictly below noon's
+    // values (the "goes dim and cool at night" test above already pins
+    // that), but high enough to actually light the network.
+    const night = skyPalette(-40);
+    const noon = skyPalette(80);
+    expect(night.ambientIntensity).toBeGreaterThanOrEqual(1.2);
+    expect(night.ambientIntensity).toBeLessThan(noon.ambientIntensity);
+    expect(night.sunIntensity).toBeGreaterThanOrEqual(0.8);
+    expect(night.sunIntensity).toBeLessThan(noon.sunIntensity);
+  });
 });
