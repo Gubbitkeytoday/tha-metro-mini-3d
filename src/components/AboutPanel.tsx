@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { hasSupportLinks, PROJECT_LINKS, PROMPTPAY_QR_SRC, SUPPORT } from "../config/support";
+import {
+  hasSupportLinks,
+  PROJECT_LINKS,
+  PROMPTPAY_QR_SRC,
+  SHARE_QR_SRC,
+  SITE_URL,
+  SUPPORT,
+} from "../config/support";
 import { formatMobile } from "../lib/promptpay";
 import { useStrings } from "../i18n/useStrings";
 import { clearPreferences } from "../lib/preferences";
@@ -82,6 +89,126 @@ function formatBankAccount(raw: string): string {
   const digits = raw.replace(/\D/g, "");
   if (digits.length !== 10) return raw;
   return `${digits.slice(0, 3)}-${digits.slice(3, 9)}-${digits.slice(9)}`;
+}
+
+/**
+ * The line colours, used as a thin accent strip on the support cards.
+ *
+ * Read from the store rather than hardcoded: they come from the registry, and a
+ * second copy here would be a second thing to update when a line is added.
+ * Falls back to slate before the network has loaded, which is the only moment
+ * the panel can be open with no routes.
+ */
+function useLineColors(): string[] {
+  const routes = useAppStore((state) => state.routes);
+  return routes.length > 0 ? routes.map((r) => r.color) : ["#64748b"];
+}
+
+/** The strip that gives these cards their identity: the network's own palette. */
+function LineStrip() {
+  const colors = useLineColors();
+  return (
+    <div className="flex h-1 w-full overflow-hidden" aria-hidden>
+      {colors.map((color, i) => (
+        <span key={i} className="flex-1" style={{ background: color }} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The payment card.
+ *
+ * One QR, not three, and the label says so. TrueMoney Wallet scans PromptPay
+ * codes, so this same code covers both — a second "TrueMoney QR" would be a
+ * byte-identical duplicate presented as something different. The bank account
+ * has no QR at all, because PromptPay resolves a registered identifier rather
+ * than an account number and the EMVCo bank-account tag is inconsistently
+ * supported; it is offered as text for anyone who would rather type it.
+ */
+function PayCard({
+  promptPayId,
+  alsoTrueMoney,
+  bankAccount,
+}: {
+  promptPayId: string;
+  alsoTrueMoney: boolean;
+  bankAccount?: { bank: string; number: string; name?: string };
+}) {
+  const t = useStrings();
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl bg-white/85 ring-1 ring-slate-300/70">
+      <LineStrip />
+      <div className="flex items-start gap-3 p-3">
+        {/* A white plate under the code, always. A QR over the glass panel's
+            translucent background is unreliable to scan, and quiet-zone
+            contrast is not a styling preference on a payment code. */}
+        {PROMPTPAY_QR_SRC && (
+          <img
+            src={PROMPTPAY_QR_SRC}
+            alt={t.promptPayQrAlt}
+            width={124}
+            height={124}
+            className="h-[7.75rem] w-[7.75rem] shrink-0 rounded-lg bg-white p-1.5 ring-1 ring-slate-200"
+          />
+        )}
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="text-[11px] font-medium leading-snug text-slate-700">
+            {alsoTrueMoney ? t.scanToPayWithTrueMoney : t.scanToPay}
+          </p>
+          <CopyableId
+            label="PromptPay"
+            value={promptPayId}
+            copyLabel={t.copy}
+            copiedLabel={t.copied}
+          />
+          {/* The reason the digits sit beside the code: a payer can check one
+              against the other before confirming. */}
+          <p className="text-[11px] leading-snug text-slate-500">{t.promptPayVerify}</p>
+        </div>
+      </div>
+      {bankAccount && (
+        <div className={`border-t px-3 py-2.5 ${GLASS_DIVIDER}`}>
+          <CopyableId
+            label={`${t.orTransferTo} · ${bankAccount.bank}`}
+            value={bankAccount.number}
+            display={formatBankAccount(bankAccount.number)}
+            copyLabel={t.copy}
+            copiedLabel={t.copied}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A QR for the app itself.
+ *
+ * The one code here where "scan it and it tells you what it is" is literally
+ * true — it opens the site. It is also the answer to how somebody shows this to
+ * a friend standing next to them on a platform.
+ */
+function ShareCard() {
+  const t = useStrings();
+  return (
+    <div className="mt-2 overflow-hidden rounded-xl bg-white/85 ring-1 ring-slate-300/70">
+      <LineStrip />
+      <div className="flex items-center gap-3 p-3">
+        <img
+          src={SHARE_QR_SRC}
+          alt={t.shareQrAlt}
+          width={72}
+          height={72}
+          className="h-18 w-18 shrink-0 rounded-lg bg-white p-1 ring-1 ring-slate-200"
+        />
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium text-slate-700">{t.shareThisApp}</p>
+          <p className="truncate font-mono text-[11px] text-slate-500">{SITE_URL.replace("https://", "")}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function AboutPanel() {
@@ -173,49 +300,13 @@ export function AboutPanel() {
               ))}
             </div>
             {SUPPORT.promptPayId && (
-              <div className="mt-3 flex items-start gap-3">
-                {/* White plate behind the code: a QR on the glass panel's
-                    translucent background is unreliable to scan, and quiet-zone
-                    contrast is not a styling preference for a payment code. */}
-                {PROMPTPAY_QR_SRC && (
-                  <img
-                    src={PROMPTPAY_QR_SRC}
-                    alt={t.promptPayQrAlt}
-                    width={112}
-                    height={112}
-                    className="h-28 w-28 shrink-0 rounded-lg bg-white p-1.5 ring-1 ring-slate-300/70"
-                  />
-                )}
-                <div className="min-w-0 space-y-1.5">
-                  <CopyableId
-                    label="PromptPay"
-                    value={SUPPORT.promptPayId}
-                    copyLabel={t.copy}
-                    copiedLabel={t.copied}
-                  />
-                  {SUPPORT.trueMoneyId && (
-                    <CopyableId
-                      label="TrueMoney Wallet"
-                      value={SUPPORT.trueMoneyId}
-                      copyLabel={t.copy}
-                      copiedLabel={t.copied}
-                    />
-                  )}
-                  {SUPPORT.bankAccount && (
-                    <CopyableId
-                      label={`${t.bankTransfer} · ${SUPPORT.bankAccount.bank}`}
-                      value={SUPPORT.bankAccount.number}
-                      display={formatBankAccount(SUPPORT.bankAccount.number)}
-                      copyLabel={t.copy}
-                      copiedLabel={t.copied}
-                    />
-                  )}
-                  {/* The whole reason the digits are printed next to the code:
-                      a payer can check one against the other before paying. */}
-                  <p className="text-[11px] leading-snug text-slate-500">{t.promptPayVerify}</p>
-                </div>
-              </div>
+              <PayCard
+                promptPayId={SUPPORT.promptPayId}
+                alsoTrueMoney={Boolean(SUPPORT.trueMoneyId)}
+                bankAccount={SUPPORT.bankAccount}
+              />
             )}
+            <ShareCard />
           </section>
         )}
 

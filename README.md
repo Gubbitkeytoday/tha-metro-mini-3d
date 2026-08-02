@@ -269,18 +269,25 @@ will ask you twice.
 **SCB** · `766-251958-6`
 
 Check the number your banking app shows against the digits above before you
-confirm. The QR is generated at build time by `npm run promptpay:qr` from
+confirm. The QR is generated at build time by `npm run qr` from
 [`src/lib/promptpay.ts`](./src/lib/promptpay.ts) and committed, precisely so it
 is a reviewable file rather than something a page assembles at runtime — decode
 it yourself if you like. It is a *static* payload: no amount is baked in, so you
 choose what to send.
 
-The SCB account is offered as text for anyone who would rather type it, and is
-deliberately **not** encoded into the QR: PromptPay resolves a registered
-identifier — a mobile number, a national ID or an e-wallet id — to an account
+There is **one** payment code rather than three, and that is deliberate. It is
+also the TrueMoney code — TrueMoney Wallet scans PromptPay, so a second
+"TrueMoney QR" would be a byte-identical duplicate presented as something
+different. The SCB account has no code at all: PromptPay resolves a *registered
+identifier* — a mobile number, a national ID, an e-wallet id — to an account
 rather than being addressed by the account number, and support for the EMVCo
-bank-account tag is inconsistent across Thai banking apps. One identifier that
-works for every payer beats a code that silently fails for some.
+bank-account tag is inconsistent across Thai banking apps, so such a code would
+fail to resolve for some payers. One identifier that works for everyone beats a
+code that silently fails for some. A test asserts the account number never ends
+up inside the payload.
+
+The About panel also carries a **share code** for the site itself — the one QR
+here where scanning it and being told what it is happens literally.
 
 <br clear="left">
 

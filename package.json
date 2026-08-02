@@ -30,9 +30,9 @@
     "og:image": "node tools/make-og-image.mjs",
     "verify:planner": "node tools/verify-planner.mjs",
     "wasm:build:docker": "node tools/wasm-docker.mjs",
-    "promptpay:qr": "node tools/make-promptpay-qr.mjs",
     "media": "node tools/make-media.mjs",
-    "media:video": "node tools/make-video.mjs"
+    "media:video": "node tools/make-video.mjs",
+    "qr": "node tools/make-qr.mjs"
   },
   "dependencies": {
     "maplibre-gl": "^6.0.0",

@@ -20,7 +20,7 @@ increment, not a batch of internal refactors.
   saved. 14 browser checks (`npm run verify:planner`), 29 unit tests.
 - A guided-tour step for the planner, translated into all nine languages.
 - **A PromptPay support code**, generated at build time
-  (`npm run promptpay:qr`) from a tested EMVCo payload builder and committed as
+  (`npm run qr`) from a tested EMVCo payload builder and committed as
   an SVG, with the account digits printed beside it so a payer can check one
   against the other.
 - **A generated screenshot gallery and demo video** (`npm run media`,

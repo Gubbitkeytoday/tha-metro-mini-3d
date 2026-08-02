@@ -132,6 +132,11 @@ export interface Strings {
   copy: string;
   copied: string;
   bankTransfer: string;
+  scanToPay: string;
+  scanToPayWithTrueMoney: string;
+  orTransferTo: string;
+  shareThisApp: string;
+  shareQrAlt: string;
   promptPayQrAlt: string;
   promptPayVerify: string;
 
@@ -312,6 +317,16 @@ const en: Strings = {
   promptPayVerify:
     "Check the number under the code before you pay — it should match your banking app.",
   bankTransfer: "Bank transfer",
+  scanToPay:
+    "Scan with any Thai banking app",
+  scanToPayWithTrueMoney:
+    "Scan with any Thai banking app or TrueMoney Wallet",
+  orTransferTo:
+    "Or transfer to",
+  shareThisApp:
+    "Share this app",
+  shareQrAlt:
+    "QR code that opens this app",
 };
 
 const th: Partial<Strings> = {
@@ -470,6 +485,16 @@ const th: Partial<Strings> = {
   promptPayVerify:
     "ก่อนโอน ตรวจเบอร์ใต้คิวอาร์ให้ตรงกับที่แอปธนาคารแสดงด้วยนะครับ",
   bankTransfer: "โอนผ่านธนาคาร",
+  scanToPay:
+    "สแกนด้วยแอปธนาคารได้ทุกธนาคาร",
+  scanToPayWithTrueMoney:
+    "สแกนด้วยแอปธนาคารหรือทรูมันนี่วอลเล็ท",
+  orTransferTo:
+    "หรือโอนเข้าบัญชี",
+  shareThisApp:
+    "แชร์แอปนี้",
+  shareQrAlt:
+    "คิวอาร์โค้ดสำหรับเปิดแอปนี้",
 };
 
 const zh: Partial<Strings> = {
@@ -626,6 +651,16 @@ const zh: Partial<Strings> = {
   promptPayVerify:
     "付款前请核对二维码下方的号码，应与银行 App 显示的一致。",
   bankTransfer: "银行转账",
+  scanToPay:
+    "用任意泰国银行 App 扫码",
+  scanToPayWithTrueMoney:
+    "用任意泰国银行 App 或 TrueMoney 钱包扫码",
+  orTransferTo:
+    "或转账至",
+  shareThisApp:
+    "分享此应用",
+  shareQrAlt:
+    "打开此应用的二维码",
 };
 
 const ja: Partial<Strings> = {
@@ -784,6 +819,16 @@ const ja: Partial<Strings> = {
   promptPayVerify:
     "送金前に、コード下の番号が銀行アプリの表示と一致するか確認してください。",
   bankTransfer: "銀行振込",
+  scanToPay:
+    "タイの銀行アプリで読み取り",
+  scanToPayWithTrueMoney:
+    "タイの銀行アプリまたは TrueMoney Wallet で読み取り",
+  orTransferTo:
+    "または口座へ振込",
+  shareThisApp:
+    "このアプリを共有",
+  shareQrAlt:
+    "このアプリを開く QR コード",
 };
 
 const ko: Partial<Strings> = {
@@ -942,6 +987,16 @@ const ko: Partial<Strings> = {
   promptPayVerify:
     "결제 전에 코드 아래 번호가 은행 앱에 표시된 번호와 같은지 확인하세요.",
   bankTransfer: "계좌 이체",
+  scanToPay:
+    "태국 은행 앱으로 스캔",
+  scanToPayWithTrueMoney:
+    "태국 은행 앱 또는 TrueMoney Wallet으로 스캔",
+  orTransferTo:
+    "또는 계좌로 이체",
+  shareThisApp:
+    "이 앱 공유하기",
+  shareQrAlt:
+    "이 앱을 여는 QR 코드",
 };
 
 const fr: Partial<Strings> = {
@@ -1100,6 +1155,16 @@ const fr: Partial<Strings> = {
   promptPayVerify:
     "Vérifiez le numéro sous le code avant de payer : il doit correspondre à celui de votre application bancaire.",
   bankTransfer: "Virement bancaire",
+  scanToPay:
+    "Scannez avec n’importe quelle app bancaire thaïe",
+  scanToPayWithTrueMoney:
+    "Scannez avec une app bancaire thaïe ou TrueMoney Wallet",
+  orTransferTo:
+    "Ou virement vers",
+  shareThisApp:
+    "Partager cette app",
+  shareQrAlt:
+    "QR code qui ouvre cette application",
 };
 
 const de: Partial<Strings> = {
@@ -1258,6 +1323,16 @@ const de: Partial<Strings> = {
   promptPayVerify:
     "Prüfen Sie vor dem Bezahlen die Nummer unter dem Code — sie muss der in Ihrer Banking-App entsprechen.",
   bankTransfer: "Banküberweisung",
+  scanToPay:
+    "Mit einer thailändischen Banking-App scannen",
+  scanToPayWithTrueMoney:
+    "Mit einer thailändischen Banking-App oder TrueMoney Wallet scannen",
+  orTransferTo:
+    "Oder Überweisung an",
+  shareThisApp:
+    "Diese App teilen",
+  shareQrAlt:
+    "QR-Code, der diese App öffnet",
 };
 
 const ru: Partial<Strings> = {
@@ -1416,6 +1491,16 @@ const ru: Partial<Strings> = {
   promptPayVerify:
     "Перед оплатой сверьте номер под кодом с тем, что показывает банковское приложение.",
   bankTransfer: "Банковский перевод",
+  scanToPay:
+    "Отсканируйте любым тайским банковским приложением",
+  scanToPayWithTrueMoney:
+    "Отсканируйте банковским приложением или TrueMoney Wallet",
+  orTransferTo:
+    "Или переводом на",
+  shareThisApp:
+    "Поделиться приложением",
+  shareQrAlt:
+    "QR-код, открывающий это приложение",
 };
 
 const es: Partial<Strings> = {
@@ -1574,6 +1659,16 @@ const es: Partial<Strings> = {
   promptPayVerify:
     "Antes de pagar, comprueba que el número bajo el código coincida con el de tu app bancaria.",
   bankTransfer: "Transferencia bancaria",
+  scanToPay:
+    "Escanea con cualquier app bancaria tailandesa",
+  scanToPayWithTrueMoney:
+    "Escanea con una app bancaria tailandesa o TrueMoney Wallet",
+  orTransferTo:
+    "O transferencia a",
+  shareThisApp:
+    "Comparte esta app",
+  shareQrAlt:
+    "Código QR que abre esta aplicación",
 };
 
 /**

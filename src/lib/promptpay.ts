@@ -7,7 +7,7 @@
  * known-good string — rather than assembled inline next to some JSX where a
  * later edit could quietly change a digit.
  *
- * The QR itself is **not** drawn at runtime. `npm run promptpay:qr` renders
+ * The QR itself is **not** drawn at runtime. `npm run qr` renders
  * this payload to `public/promptpay-qr.svg` at build time and that file is
  * committed, so the code a visitor scans is a reviewable artefact in the
  * repository rather than something the page computed on the fly. The account
